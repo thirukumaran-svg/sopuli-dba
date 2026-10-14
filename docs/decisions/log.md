@@ -559,6 +559,34 @@ the register.
   - Only with `--dry-run` or `--verbose`: a consumer could not compare plan and
     result for an ordinary run.
 
+## J3
+
+- **Decided:** 2026-10-14, #641
+- **Question:** Which warnings get a machine-readable code (`SOPULI-Wnnn`), and
+  how are the numbers allocated?
+- **Decision:** Every warning that reaches a run document has a code, including
+  the config layer's findings. The codes are one flat series. A number is never
+  reused, and it is fixed when it reaches `main`. A test fails when two codes
+  share a number or the numbers have a gap. Error codes (`SOPULI-2nnnn`) are a
+  series of their own from `SOPULI-20001`, numbered by the same rules. An error
+  gets a code only where a consumer must tell it from the other errors in its
+  category.
+- **Why:** A consumer branches on the code, because the message may change. A
+  warning with no code can only be matched on its text. An error already has a
+  category and an exit code to branch on, so it needs a code only where those do
+  not tell it apart. The 32 warning codes allocated
+  before this were already one series, and moving them would be a breaking
+  change. Two pull requests written in parallel often take the same next number,
+  and the test makes the second one take a new number before it merges.
+- **Rejected:**
+  - A code only where the exit code cannot say it: it leaves warnings that a
+    consumer can only match by their text. It stays the rule for which `doctor`
+    findings exist.
+  - Ranges by category for new codes: it mixes two schemes beside 32 codes that
+    cannot move.
+  - A code for every one of the tool's own errors: the category and the exit
+    code already do that work.
+
 ## J4
 
 - **Decided:** 2026-10-03, #615
@@ -801,7 +829,7 @@ the register.
 - **Rejected:**
   - The database as the clock: the problems above.
   - The vault for selection, with a warning when the database age differs: it
-    needs a warning code, and how codes are allocated is still open (J3).
+    needs a warning code, and how codes were allocated was then open (J3).
 
 ## H1
 

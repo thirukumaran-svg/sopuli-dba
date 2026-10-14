@@ -45,8 +45,9 @@ class ClientError(ConfigError):
     who fixes it. Not ``capability``, which names something the database at the
     far end cannot do and no local action changes.
 
-    No ``error.code``. J3 is open, three numbers have been allocated by hand,
-    and a fourth allocated the same way would still not answer it.
+    No ``error.code`` yet. J3 gives it one: installing something fixes it, where
+    a change to the configuration, or to what it points at, fixes most ``config``
+    errors. #801 adds it.
     """
 
 

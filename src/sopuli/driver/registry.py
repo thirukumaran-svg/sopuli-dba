@@ -49,10 +49,7 @@ from sopuli.extras import installed as extras_installed
 #: (``03-json-output.md`` §3), so a consumer can branch on this case without
 #: parsing the message.
 #:
-#: Allocated by hand, beside ``SOPULI-20001``'s store equivalent, and **J3 is
-#: still open**: how codes are apportioned across categories is undecided.
-#: Recording that it was a hand allocation is the point -- a number chosen in
-#: passing is exactly what a registry is supposed to stop.
+#: The next number after ``SOPULI-20001``, its store equivalent (J3).
 DRIVER_NOT_INSTALLED = "SOPULI-20002"
 
 
@@ -141,9 +138,9 @@ class DriverNotImplementedError(ConfigError):
     ``TARGET_TYPES`` -- and discovering then that the failure path is a
     ``KeyError`` is discovering it in the worst way.
 
-    No ``error.code``: the registry's numbers are allocated by hand, and none of
-    them means this. Allocating another here would answer J3 as a side effect of
-    an import failure.
+    No ``error.code`` yet. J3 gives it one: the configuration is right and there
+    is nothing to install, so a consumer must tell it from the ``config`` errors
+    that a change to either fixes. #801 adds it.
     """
 
 

@@ -53,9 +53,8 @@ secure_choice = csprng.choice
 MAX_ATTEMPTS = 1000
 
 #: The rules :func:`check` reports against. Slugs rather than prose so a command
-#: can group them, and internal for now: whether they become codes in the JSON
-#: contract is J3 (the warning code registry), which this must not answer by
-#: accident.
+#: can group them. Internal: they are not codes in the JSON contract, which has
+#: its own registry (``03-json-output.md`` §3).
 CHARSET = "charset"
 FORBIDDEN = "forbidden"
 CONTROL = "control"

@@ -1747,8 +1747,9 @@ failed verification, and must not be reported as drift.
 
 ### Diagnostic codes
 
-`diagnostic.code` is optional. Where it is present, it comes from this registry.
-A code is part of the contract, like an enum value: adding one is a minor bump,
+Every warning has a `diagnostic.code` from this registry (the rule is below the
+table). The schema keeps the field optional, because an `info` diagnostic has no
+code. A code is part of the contract, like an enum value: adding one is a minor bump,
 and changing what one means is not allowed at all. The *message* around it is
 not contract and may improve.
 
@@ -1790,19 +1791,41 @@ not contract and may improve.
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.
 
-**How codes are allocated is open** (J3, open: #641). The code format and the
-fact that these warnings have codes are settled. Whether every warning gets one
-is not: the config layer's findings (`01-configuration.md` §10) have none. Nor
-is the scheme for numbering across categories. Each code so far was allocated by
-hand when something needed it.
+**Every warning that reaches a run document has a code** ([J3](../decisions/log.md#j3)).
+That covers `diagnostics[]`, `results[].warnings[]` and the config layer's
+findings (`01-configuration.md` §10). A consumer branches on the code, because
+the message is not contract. A warning with no code could only be matched on its
+text. Some warnings do not have their code yet: the config layer's are #797,
+and the others are #798. `tests/test_warning_codes.py` lists them, fails on a
+new warning built without a code, and fails when a listed one gains its code
+until the list is shortened. Diagnostics at `info` level are not warnings, and
+have no code.
 
-**For `doctor`, a finding gets a code only for what the exit code cannot say.**
+**Codes are one flat series**, `SOPULI-W001` upwards, with no ranges by
+category. The next code is the next free number. A number is never reused: when
+a warning stops being emitted, its row stays in this table and its constant
+stays in the registry. The code cell is unchanged, and the meaning starts with
+**Retired.** and the release that stopped emitting it. `tests/test_warning_codes.py` records the
+highest number given so far, so a pull request that adds a code raises it there,
+and one that deletes the highest row fails.
+
+**A number is fixed when it reaches `main`.** Two pull requests written at the
+same time often take the same next number. `tests/test_warning_codes.py` fails
+when two codes share a number, when the numbers have a gap, or when this table
+and the registry disagree. Nothing enforces that a branch is current with `main`
+when it merges (`docs/workflow.md`), so bring it up to date first. The second
+of two such pull requests then fails, and takes the next free number. Both also
+add a different row at the end of this table, so git usually reports a conflict
+before any test runs.
+
+**For `doctor`, a finding gets a diagnostic only for what the exit code cannot say.**
 An unreachable store fails the run, so anything watching the exit code already
 knows, and the `vaults[]` entry names the store and the reason, as an unreachable
 target's `targets[]` entry does. A store that answered and cannot serve, or a
 clock outside the lock's tolerance, leaves the run exiting 0 with something
-still wrong, and a diagnostic is for that. This is a rule for one command, not an
-answer to J3.
+still wrong, and a diagnostic is for that. This rule decides which `doctor`
+findings exist. A finding that exists at warning level has a code, like any
+other warning.
 
 **`SOPULI-W002` has two emitters and one meaning.** It means "a lock was taken
 from its holder". `lock break` adds a person deciding it, where
@@ -1814,8 +1837,21 @@ alerts on "somebody's lock was taken" that there were now two things to watch.
 
 `error.code` carries the vendor's code where there is one: `ORA-01017` comes from
 the server, and the tool passes it through. Where the condition is the tool's
-own, the code is a `SOPULI-` code from this registry, under the same rule as the
-diagnostic codes above.
+own, it may have a `SOPULI-` code from this table.
+
+**An error gets a code where a consumer must tell it from the other errors in its
+category.** Every error already has `error.category` and an exit code, and a
+consumer branches on those first. Most `config` errors are fixed in the
+configuration or in what it points at, such as a variable or a file. A missing
+client for a configured backend, driver or channel is fixed by installing
+something, so each has a code. A warning has no category, so every
+warning has a code. An error needs one only to be told apart. Three errors this
+rule gives a code do not have it yet: #801. ([J3](../decisions/log.md#j3))
+
+**The numbers follow the warning codes' rule:** one flat series from
+`SOPULI-20001`, never reused, and fixed when it reaches `main`.
+`tests/test_warning_codes.py` checks this table as it checks the warnings', and
+records its highest number too.
 
 | Code | Category | Exit | Meaning |
 |---|---|---|---|
@@ -2592,7 +2628,7 @@ CI. The schema is the test fixture, not documentation written afterwards.
 |---|---|---|
 | J1 | ~~Should `--output json` stream nothing until completion, even for long runs?~~ | **decided** (#615): yes; `jsonl` covers the streaming case. Reasons: [J1](../decisions/log.md#j1) |
 | J2 | ~~Include `plan` in every run, or only with `--dry-run`/`--verbose`?~~ | **decided: every command that plans** (#615). A command with no units, such as `doctor`, emits none (§2). Reasons: [J2](../decisions/log.md#j2) |
-| J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | **open** (#641): codes and a registry exist (§3). Which warnings get a code, and how numbers are allocated across categories, is not decided. The config layer's findings have no codes |
+| J3 | ~~Which warnings get a machine-readable code (`SOPULI-W014`), and how are numbers allocated?~~ | **decided: every warning in a run document, in one flat series** (#641). A number is never reused, and is fixed when it reaches `main` (§3). Reasons: [J3](../decisions/log.md#j3) |
 | J4 | ~~Emit a top-level `hostname`/`pid` for log correlation~~ | **decided: host only** (#615), as `invocation.actor.host`; no pid. Reasons: [J4](../decisions/log.md#j4) |
 | J5 | OpenTelemetry span export alongside JSON | **deferred**: later; `correlation_id` is already the trace id in spirit |
 | J6 | ~~Should the event stream be resumable after a crash?~~ | **decided** (#615): no; run it again. Reasons: [J6](../decisions/log.md#j6) |

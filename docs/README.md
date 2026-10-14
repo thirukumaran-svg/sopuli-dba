@@ -195,7 +195,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | P8 | 02 | 11.2 keeps the `ALTER USER` text in `V$SQLSTATS` | decided | document it | #387 |
 | J1 | 03 | Does `--output json` print nothing until the end? | decided | yes; `jsonl` streams | #615 |
 | J2 | 03 | `plan` in every run? | decided | in every command that plans | #615 |
-| J3 | 03 | Machine-readable warning codes | open | codes exist; how numbers are allocated is open | #641 |
+| J3 | 03 | Machine-readable warning codes | decided | every warning in a run document has one; one flat series | #641 |
 | J4 | 03 | Host and pid in the output | decided | `invocation.actor.host`; no pid | #615 |
 | J5 | 03 | OpenTelemetry export | deferred | later; `correlation_id` serves until then | |
 | J6 | 03 | Resumable event stream after a crash? | decided | no; run again | #615 |

@@ -812,12 +812,9 @@ class ConfigWarning:
     JSON contract has a ``diagnostics`` array these become. Same fields as
     :class:`~sopuli.config.errors.ConfigError` so both render identically.
 
-    ``code`` is optional and mostly absent. §10's findings have none, and J3 --
-    which warnings get a code, and how numbers are allocated across categories --
-    is still open, so this is a slot rather than a policy: a finding a consumer
-    would want to branch on can carry one, and the rest stay prose. The first is
-    ``SOPULI-W004``, because a run with certificate verification turned off is
-    exactly what a scheduler should be able to notice without matching text.
+    ``code`` is a slot that every warning fills (J3). Only ``SOPULI-W004`` fills
+    it today, for a run with certificate verification turned off. #797 adds the
+    codes for the other §10 findings.
     """
 
     message: str

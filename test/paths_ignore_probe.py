@@ -115,6 +115,7 @@ DOCS_LANE = (
     "tests/test_measurements.py",
     "tests/test_pending_work.py",
     "tests/test_readme_links.py",
+    "tests/test_warning_codes.py",
 )
 
 WORKFLOWS = (

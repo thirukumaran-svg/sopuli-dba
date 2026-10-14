@@ -1,13 +1,14 @@
 """Warnings that carry a code, and the registry of what each code means.
 
-J3 asks for stable machine-readable codes so that consumers branch on a code
-rather than grepping a message, and says they get a documented registry. This is
-that registry.
+Consumers branch on a code, not on a message, so warnings carry stable
+machine-readable codes with a documented registry. This is that registry.
 
-**J3 itself is open.** What is decided is the spelling ``SOPULI-Wnnn``, and that
-the warnings below have codes. Each was allocated by hand, when something needed
-it. Whether *every* warning gets one -- most of the config layer's §10 findings
-do not -- and how numbers are allocated across categories are the open part.
+**Every warning that reaches a run document has a code** (J3,
+``03-json-output.md`` §3). The codes are one flat series, ``SOPULI-W001``
+upwards. The next code is the next free number, and a number is never reused.
+``tests/test_warning_codes.py`` fails on two codes with one number, on a gap,
+and on a registry that disagrees with the document's table. The config layer's
+findings and a few others have no code yet (#797, #798).
 
 For `doctor`, it is settled **when a finding gets a diagnostic at all**: one
 for what the exit code cannot tell you. An unreachable store fails the run, so
@@ -73,7 +74,6 @@ UNLISTABLE_STORE = "SOPULI-W005"
 #: registered description names a ``vaults:`` entry: one code meaning "some
 #: backend or other is missing" would leave a consumer unable to tell a store it
 #: cannot reach from a database it cannot reach, which are different outages.
-#: Hand-allocated, like :data:`MISSING_BACKEND`, and J3 is still open.
 MISSING_DRIVER = "SOPULI-W006"
 
 #: An account's password is in its grace period: past ``PASSWORD_LIFE_TIME`` and

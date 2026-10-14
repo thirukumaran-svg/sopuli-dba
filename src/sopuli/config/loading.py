@@ -397,10 +397,8 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
     as a file that would hand somebody a password, and a file naming a method
     this build does not implement would not.
 
-    No code yet. J3 -- how codes are allocated across categories -- is still open,
-    and this follows established practice rather than settling it: the §10
-    warnings this joins carry none either, and a number reserved for a message
-    that exists for one release is worse than prose.
+    No code yet. Every warning gets one (J3), and #797 adds the codes for this
+    one and the other §10 warnings.
     """
     found = []
     notice = unserviceable(config.delivery)

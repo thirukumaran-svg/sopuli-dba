@@ -135,6 +135,7 @@ PROSE_READERS = (
     "tests/test_pending_work.py",
     "tests/test_readme_links.py",
     "tests/test_verification_register.py",
+    "tests/test_warning_codes.py",
 )
 
 

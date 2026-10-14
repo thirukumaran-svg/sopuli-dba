@@ -131,9 +131,8 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
 
     Built through :class:`~sopuli.output.document.Diagnostic`, because two
     hand-rolled dicts in one array are two chances to disagree about a shape the
-    schema states once. The age warning carries no ``code``, because allocating
-    one is J3's question, not this list's. ``to_dict`` omits an absent ``code``
-    rather than nulling it.
+    schema states once. The age warning has no ``code`` yet; #798 adds it.
+    ``to_dict`` omits an absent ``code`` rather than nulling it.
     """
     found = []
     if row.over_age:
