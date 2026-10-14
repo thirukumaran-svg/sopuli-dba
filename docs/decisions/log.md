@@ -1944,7 +1944,8 @@ the register.
     character httpx cannot encode raises `UnicodeEncodeError`, which quotes it.
   - httpx encodes a header as ASCII. A token with any other character raised
     `UnicodeEncodeError` with that character and its position.
-  - A token with a line break, such as a `` left by a file saved on Windows,
+  - A token with a line break, such as a `
+` left by a file saved on Windows,
     raised `httpx.LocalProtocolError`, and its message quoted the whole token.
   - The vault transport raised every httpx error other than a timeout or a
     connection failure as it was. One is an encoding error for a body, and the
@@ -1965,3 +1966,29 @@ the register.
     unless `traced_cursor` converted every error. A bug would show only
     `KeyError`. And `--debug` prints the message of the exception at the top of
     its traceback, so it would need the same change.
+
+## #240
+
+- **Decided:** 2026-10-14, #240
+- **Question:** Should `doctor` check that the TNS alias in an `external`
+  target's `dsn` resolves?
+- **Decision:** No. `doctor` does not look up the alias.
+- **Why:** The connection already reports this case well. An alias that does
+  not resolve fails with `ORA-12154`. Instant Client 23.26.3.0.0 raised it with
+  the default `sqlnet.ora`, with `NAMES.DIRECTORY_PATH=(TNSNAMES)`, and with
+  `(TNSNAMES, EZCONNECT, HOSTNAME)`. Its message names the file it searched.
+  The driver maps it to `UNREACHABLE`, with a hint that names the dsn and
+  `TNS_ADMIN`, in the target's own `targets[]` entry. #215 added the wallet
+  report because a wallet fault shows up as an error about the login, which
+  points at the wrong cause. A missing alias shows up as an error about name
+  resolution, which is the right cause. A check would report it only a few
+  seconds earlier. It would also be wrong in some estates. An alias can come
+  from LDAP, through `names.directory_path` and `ldap.ora`, and a parser of
+  `tnsnames.ora` cannot see it. The file, or a file that `IFILE` names, can be
+  unreadable to this process. A false "alias not found" sends someone to fix a
+  file that is correct.
+- **Rejected:** A parser that reports a missing alias only when it can see
+  every source: a readable `tnsnames.ora`, every file that its `IFILE` lines
+  name, and no directory path other than `TNSNAMES`. In every other case its
+  only honest output is "not in the file I could read", and that is not worth
+  the code.

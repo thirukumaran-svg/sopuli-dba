@@ -1290,6 +1290,13 @@ alias means asking the Oracle client, and the connection already does that
 better than any inspection: a target that connects has proved its wallet works.
 What is left for this section is the diagnosis when it does not.
 
+**The alias is not looked up.** `doctor` does not check that an `external`
+target's alias resolves. An alias that does not resolve fails the connection
+with `ORA-12154`, and its hint names the dsn and `TNS_ADMIN`. A parser of
+`tnsnames.ora` cannot see an alias that comes from LDAP, or one in a file it
+cannot read, so it would report a correct file as wrong. The reasons are in
+[the decision log](../decisions/log.md#240).
+
 **A mutual-TLS target is not in this section.** A target that logs in by
 password over mutual TLS needs a wallet too, but `doctor` cannot tell that from
 the config: the alias names the target, and `protocol=tcps` is inside
