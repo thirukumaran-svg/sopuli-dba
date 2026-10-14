@@ -203,7 +203,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | T1 | 04 | Does an 11g XE image exist? | decided | yes | #1 |
 | T2 | 04 | testcontainers or compose? | decided | compose | #174 |
 | T3 | 04 | Is LocalStack Secrets Manager in the community tier? | open | | #642 |
-| T4 | 04 | Does OCI Vault cost matter in a test loop? | open | | #643 |
+| T4 | 04 | Does OCI Vault cost matter in a test loop? | decided | no; tier 3 only, for the tenancy, not the cost | #643 |
 | T5 | 04 | Public CI provider | decided | GitHub Actions | |
 | T6 | 04 | A real Data Guard standby for the read-only test? | deferred | until a driver bug needs it | |
 | T7 | 04 | Snapshot and restore for Oracle resets | deferred | drop and recreate until tier 2 is too slow | |
@@ -433,6 +433,14 @@ These entries share a setup. The probe is
   measurements are in [ADR-005](decisions/adr-005-vault-client.md). `httpx` is in
   the `sopuli-dba[hashicorp]` extra, not in base (ADR-006, E2). The probe is
   `test/vault_auth_probe.py`.
+- `unverified` `oci-vault-cost-limits` (#643) — **Do the OCI Vault tests in
+  tier 3 still cost nothing, and do they stay inside the service limits?**
+  Known: on 2026-10-14 Oracle's pages listed Secret Management as free, a
+  software-protected key as free, and API calls to Key Management as not billed
+  (T4). Open: the prices in a tenancy's cost analysis, and the limits that a
+  fixed set of secrets can reach under repeated rotation, such as the versions
+  a secret keeps. The pull request that builds an OCI store answers both. No OCI
+  store exists yet, so nothing depends on this.
 
 ## Next use cases
 

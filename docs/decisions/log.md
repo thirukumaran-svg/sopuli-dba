@@ -628,6 +628,27 @@ the register.
   - `testcontainers-python`: a second definition of the stack, which the tests
     and the by-hand stack could disagree on.
 
+## T4
+
+- **Decided:** 2026-10-14, #643
+- **Question:** Does running tests against a real OCI Vault cost enough to
+  matter?
+- **Decision:** No. Cost is not a reason to limit the OCI Vault tests. They run
+  only in tier 3, because they need a tenancy and its credentials. They use one
+  default vault, a software-protected key and a fixed set of secrets, and they
+  replicate nothing across regions. The pull request that builds an OCI store
+  checks the prices again in the tenancy's cost analysis, and records the date.
+  It also checks the service limits that a fixed set of secrets can reach, such
+  as the number of versions a secret keeps.
+- **Why:** Oracle's pages, checked on 2026-10-14, list OCI Secret Management as
+  free. Key Management does not bill API calls. A software-protected key is
+  free, and an HSM-protected key is billed per key version after the first 20.
+  A private vault is billed by the hour, and replicating a secret to another
+  region can bring charges for the target vault and its keys. A test set-up
+  that avoids those three costs nothing.
+- **Rejected:** Limiting the number of OCI Vault test runs, or sharing one
+  secret between them to save cost: there is no cost to save.
+
 ## T5
 
 - **Decided:** 2026-08-09

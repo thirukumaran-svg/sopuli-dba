@@ -70,10 +70,22 @@ Reasons: [T1](../decisions/log.md#t1).
 | Oracle 19c EE 19.19.0.0.0 | `enterprise:19.19.0.0`, the `oracle-19c-ru` service. It is above 19.12, so it can open a rollover window, but the image is linux/arm64 only, and under emulation on an x86 host the instance does not start. It has never run. [`../maintainer-environments.md`](../maintainer-environments.md) §4 | the same registry terms, and an arm64 host |
 | Oracle 19c release update | an OCI Base Database Service DB system, created by `test/oci-dbcs/new-db-system.ps1` and reached through an OCI Bastion session. [`../maintainer-environments.md`](../maintainer-environments.md) §5 | the DB system is billed by the hour |
 | Autonomous Database | a personal OCI tenancy. [`../maintainer-environments.md`](../maintainer-environments.md) §6 | needs an OCI tenancy |
-| OCI Vault | a personal OCI tenancy | no faithful local emulator |
+| OCI Vault | a personal OCI tenancy | needs an OCI tenancy and its credentials, and no local emulator is faithful |
 
 What each of these has run, and on which release, is in
 [`../measurements.md`](../measurements.md).
+
+**Cost does not limit the OCI Vault tests.** They run only in tier 3, for the
+reasons in the table, and not because of cost. They use one vault and a fixed set
+of secrets, and they stay free:
+
+- the vault is a default vault, not a private vault;
+- its key is software-protected, not HSM-protected;
+- no secret is replicated to another region.
+
+The pull request that builds an OCI store checks the prices again. It also checks
+the service limits that a fixed set of secrets can reach
+(unverified: oci-vault-cost-limits). Reasons: [T4](../decisions/log.md#t4).
 
 ### Emulators: smoke tests only
 
@@ -591,7 +603,7 @@ them is red.
 | ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **decided: yes** (#1), `11.2.0.2-slim`, amd64 only. See §2. Reasons: [T1](../decisions/log.md#t1) |
 | ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **decided: compose** (#174). The harness starts nothing; `SOPULI_TEST_ORACLE_DSN` points it elsewhere. Reasons: [T2](../decisions/log.md#t2) |
 | T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
-| T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
+| ~~T4~~ | ~~Does OCI Vault cost enough to matter in a test loop?~~ | **decided: no** (#643). Tier 3 only, because it needs a tenancy. See §2. Reasons: [T4](../decisions/log.md#t4) |
 | ~~T5~~ | ~~Public CI provider~~ | **decided: GitHub Actions.** See `../workflow.md`. Reasons: [T5](../decisions/log.md#t5) |
 | T6 | Do we need a real Data Guard standby to test the read-only refusal? | probably: a closed PDB is not the same failure. Defer until a driver bug argues for it |
 | T7 | Snapshot/restore for faster Oracle resets | **deferred**: start with drop-and-recreate; revisit if tier 2 exceeds its budget |
