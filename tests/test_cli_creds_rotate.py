@@ -101,6 +101,7 @@ applications:
 """
 
 LIVE = "Correct-Horse-Battery-9"
+STAGED = "Staged-Earlier-Password-7"
 
 
 @pytest.fixture
@@ -482,6 +483,100 @@ def test_pending_is_cleared_by_the_promotion(
 
     body = stored(harness["store"], "apps/acme/appdb-alpha")
     assert "acme_web_user" not in body.get("pending", {})
+
+
+# ------------------------------------------------- a pending already there ---
+
+
+def _staged_already() -> dict[str, dict[str, Any]]:
+    """Both documents with a live password, and alpha's with a `pending` too."""
+    documents = _two_targets()
+    documents["apps/acme/appdb-alpha"] = {
+        **documents["apps/acme/appdb-alpha"],
+        "pending": {"acme_web_user": STAGED},
+    }
+    return documents
+
+
+@pytest.mark.parametrize("mode", [(), ("--dry-run",)], ids=["run", "dry-run"])
+def test_a_rotation_over_a_staged_pending_is_refused(
+    mode: tuple[str, ...],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """#769: an `apply` may be putting that `pending` on a database right now,
+    and drawing over it would leave the database with a password the vault has
+    nowhere. Refused before the pre-flight, and under `--dry-run` too, as the
+    other plan-time refusals are."""
+    harness = estate(documents=_staged_already())
+    before = harness["store"].read("apps/acme/appdb-alpha").version
+
+    result = run(runner, write_config(CONFIG), *mode)
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.ABORTED
+    message = str(result.exception)
+    assert message.startswith("acme_web_user already has a `pending` staged")
+    hint = getattr(result.exception, "hint", "") or ""
+    assert "sopuli creds apply" in hint
+    assert "creds generate --overwrite-pending" in hint
+    assert harness["store"].read("apps/acme/appdb-alpha").version == before
+    assert harness["sessions"] == [], "refused before the pre-flight connected"
+
+
+def test_a_pending_that_is_not_text_is_refused_as_well(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """One test for a staged `pending`, used at the plan and at the write. A
+    value of the wrong shape is still something step 4 would discard, so the
+    plan refuses over it rather than leaving the write to fail as a race."""
+    documents = _two_targets()
+    documents["apps/acme/appdb-alpha"] = {
+        **documents["apps/acme/appdb-alpha"],
+        "pending": {"acme_web_user": {"not": "text"}},
+    }
+    estate(documents=documents)
+
+    result = run(runner, write_config(CONFIG))
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.ABORTED
+
+
+def test_the_refusal_releases_the_lock(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    harness = estate(documents=_staged_already())
+
+    run(runner, write_config(CONFIG))
+
+    for path in ("apps/acme/appdb-alpha", "apps/acme/appdb-beta"):
+        record = harness["store"].read(f"locks/{path}")
+        assert record is not None
+        assert record.data["state"] == "released"
+
+
+def test_a_pending_staged_after_the_read_is_not_drawn_over(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The staging write checks again. A `pending` found there was written
+    after the run's own read, which only a run that took the lock over can do,
+    so it is a staging failure: nothing is applied to any database."""
+    harness = estate(documents=_staged_already())
+    monkeypatch.setattr("sopuli.cli._refuse_staged_rotation", lambda rotating, documents: None)
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    body = document(result)
+    assert body["exit_code"] == ExitCode.FAILURE
+    alpha = [one for one in body["results"] if one["target"] == "appdb-alpha"]
+    assert "after the plan" in alpha[0]["actions"][0]["detail"]
+    assert "creds apply" in alpha[0]["actions"][0]["detail"]
+    assert "--overwrite-pending" not in alpha[0]["actions"][0]["detail"], "rotate has no such flag"
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"] == {"acme_web_user": STAGED}
+    assert changed(harness) == []
 
 
 def test_the_new_password_is_never_the_old_one(

@@ -240,6 +240,7 @@ It does not change the database. It may connect to read constraints.
 sopuli creds generate --application acme [--account acme_web_user]
                       [--promote]            # write straight to `current` (no staging)
                       [--overwrite-current]  # authorise replacing an existing `current`
+                      [--overwrite-pending]  # authorise discarding a staged `pending`
                       [--from-stdin]         # take a supplied password instead of generating
                       [--no-policy-check]    # accept a supplied password that violates the policy
                       [--policy NAME]        # override the policy
@@ -349,7 +350,22 @@ read does not change the argument.
   on a violation, unless `--no-policy-check` is passed. The audit event records
   that flag. It reads `length:` as a minimum, not an exact figure, because a
   dictated password is not weaker for being longer.
-- Generating twice without applying replaces `pending`. That is safe, and the run
+- **A staged `pending` is not discarded unless you ask** (decided in #769).
+  Where a selected account already has one, the run refuses on exit 8, naming
+  the accounts, and points to `creds apply`, which applies and promotes what is
+  staged. An `apply` may be putting that password on a database at that moment,
+  for example one that took over an expired lock. Drawing over it would leave
+  the database holding a password that the vault holds nowhere.
+  `--overwrite-pending` authorises the discard, for a staged password that
+  nobody should use. Like `--overwrite-current`, it is a flag you type, not a
+  prompt, and `--confirm` does not satisfy it. `--dry-run` is never refused,
+  and it names the accounts that have a `pending`. To do that it reads the
+  vault, so a preview needs the vault token, as `--promote --dry-run` does. A
+  document the plan cannot read is named, with the note that whether it has a
+  `pending` is not known. The run checks again under
+  the lock, and a `pending` that appeared after the plan is not discarded: that
+  document's write fails and names the accounts.
+- Generating twice with `--overwrite-pending` replaces `pending`, and the run
   says so. It warns, naming the version whose `pending` it replaced, because
   anything that already holds that password is now stale. A fresh draw has no
   target state to converge on, so this verb is outside invariant 9 (decided in
@@ -437,7 +453,9 @@ send `check` and `apply` looking for a `pending` that does not exist.
 --source` defaults to `pending` where there is one. A staged password left beside
 a newly promoted one is a password the next `apply` would prefer, which would
 undo this run without anyone asking. `--promote` reuses the promotion patch that
-`creds apply` uses, which already clears it.
+`creds apply` uses, which already clears it. Clearing a `pending` discards it,
+so `--promote` over one needs `--overwrite-pending` as well, for the reason §4
+gives. `--overwrite-current` does not cover it.
 
 On tier 1 against Oracle Free 23.26.2.0.0 and a dev-mode Vault,
 `generate --promote` seeds `current` at v1. `apply` then reads it with
@@ -966,7 +984,8 @@ reports `PENDING_APPLY`, for a rollback it refused, and that row is a pair to
 repair. A `rotate` document with only staging rows stopped at step 4, before any
 database was changed. The tool refuses it, because a repair set of nothing would
 report `nothing to apply` and read as "already repaired". §8 row 4's recovery is
-to run `rotate` again.
+`apply` where the run staged a `pending`, and otherwise `rotate` again. A new
+rotation refuses over a staged `pending` (§8).
 
 **A document from a run that lost its lock is refused**, whichever verb wrote
 it. It carries `SOPULI-W011`, and §8 says the run that holds the lock is the one
@@ -1653,6 +1672,20 @@ way would draw a password, put it on part of the estate, and stop at case 7 on
 every run. To rotate part of an estate at a time, run `creds generate`, then
 `creds apply` per target, then a final `apply` to promote.
 
+**A rotation over a staged `pending` is refused before the pre-flight**
+(decided in #769). Where an account being rotated already has a `pending`, the
+run exits 8, names the accounts, and points to `creds apply`. The reason is
+§4's: some run may be putting that password on a database now, and step 4 would
+draw over it. `rotate` has no flag to go ahead; `creds generate
+--overwrite-pending` discards the `pending` for an operator who means to. The
+check reads the documents under the lock. Only a run that took the lock over can
+stage between that read and step 4's write. The fence check before the write
+stops this run if the takeover came first. If it came between the fence check
+and the write, the write reads the document first, finds the `pending`, and
+fails that document with a message that points to `apply`. If it came after
+that read, the write's compare-and-set fails. In the last two cases the run
+exits 1, and nothing is applied to any database.
+
 **Sequence**
 
 ```
@@ -1863,7 +1896,7 @@ invariant 5: the write lands under the store's `locks/` prefix, in a store that
 | Fails at | State afterwards | Recovery |
 |---|---|---|
 | 1–3 | nothing changed | fix and run again |
-| 4 | nothing changed in the database; `pending` may exist | run `rotate` again, or `generate` then `apply` |
+| 4 | nothing changed in the database; `pending` may exist | `apply` where a `pending` was staged, which applies and promotes it; otherwise run `rotate` again |
 | 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair` with the run's document, then `apply` to promote (§5, *A repair of a rotation*); with the rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **the most severe case**: `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
@@ -2104,8 +2137,8 @@ affected. While the database is unreachable, `check` reports `ERROR` and exits 1
 Once it is back, `check` finds no drift, because the database still holds
 `current`, and `creds status` shows the staged `pending`. Finish with `apply`,
 which applies the staged `pending`, confirms it and promotes. Running `rotate`
-again does not resume: it draws a new password and stages it over the old
-`pending`.
+again does not resume: it refuses on exit 8, names the account, and points to
+`apply` (§8).
 
 **S7: the application still holds the old password after the window closed.**
 Logins start failing. `check --include-previous` shows that the old password is

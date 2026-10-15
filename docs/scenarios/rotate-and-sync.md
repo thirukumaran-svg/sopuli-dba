@@ -167,12 +167,19 @@ acme_app_user  vault-dev:acme/dev/acme  staged v1
 1 staged; no database was changed -- run `sopuli creds apply` to use them
 ```
 
-**Running this twice stages a second password and says so.** A command that
-*converges* on something reports "nothing changed" on a second run — `apply` and
-`check` both do. This one cannot: drawing a fresh random secret has no earlier
-state to converge on, so the second run replaces the `pending` and tells you it
-did (`staged v2, replaced the pending in v1`). Nothing is lost — `current` is
-untouched either way.
+**Running this twice is refused.** The first run's `pending` is a password that
+`apply` may already be putting on the database, so the second run will not
+discard it unless you ask:
+
+```
+sopuli: 1 of the selected accounts already has a `pending` staged (acme_app_user), and this run would discard it
+  hint: run `sopuli creds apply` to apply and promote what is staged, or pass --overwrite-pending to discard it
+```
+
+Exit 8. With `--overwrite-pending`, the run draws a new password and says what
+it replaced (`staged v2, replaced the pending in v1`). It reports a change every
+time, because a fresh random secret has no earlier state to converge on.
+`current` is untouched either way.
 
 To supply a password rather than draw one, pipe it in. There is no option that
 takes a password as its value, anywhere in this tool:

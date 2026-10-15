@@ -691,6 +691,10 @@ def test_force_clears_a_named_account_too(
 
 
 # --------------------------------------------------------------- `rotate` ---
+#
+# `rotate` refuses over a staged `pending` (#769), so its estate has none.
+
+NOTHING_STAGED = {"DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE}}
 
 
 def test_rotate_is_guarded_too(
@@ -702,7 +706,8 @@ def test_rotate_is_guarded_too(
         {
             "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-        }
+        },
+        document=NOTHING_STAGED,
     )
     runner.invoke(
         cli,
@@ -719,7 +724,8 @@ def test_rotate_takes_force_as_well(
         {
             "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-        }
+        },
+        document=NOTHING_STAGED,
     )
     runner.invoke(
         cli,
@@ -877,7 +883,10 @@ def test_rotate_reports_it_too(
 ) -> None:
     """Asserted rather than assumed, for `test_rotate_is_guarded_too`'s reason:
     that `rotate` sequences `apply` is a property of today's call graph."""
-    estate({"ACME_WEB_USER": unreadable(), "ACME_BATCH_USER": unreadable("ACME_BATCH_USER")})
+    estate(
+        {"ACME_WEB_USER": unreadable(), "ACME_BATCH_USER": unreadable("ACME_BATCH_USER")},
+        document=NOTHING_STAGED,
+    )
     result = runner.invoke(
         cli,
         [

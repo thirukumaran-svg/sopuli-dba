@@ -292,7 +292,8 @@ def _refuse_unapplied(document: dict[str, Any], *, path: Path) -> None:
     ``SOPULI-W011`` and :func:`_refuse_fenced` refuses it first.) Every
     row is skipped, so the repair set would be empty, and a run that reported
     ``nothing to apply`` would read as "already repaired". The recovery is §8
-    row 4's, a new rotation.
+    row 4's: `apply` for a `pending` the run staged, since a new rotation
+    refuses over it (#769), and otherwise a new rotation.
     """
     rows = [row for row in document.get("results") or () if isinstance(row, dict)]
     if rows and all(_is_staging(row) for row in rows):
@@ -300,7 +301,11 @@ def _refuse_unapplied(document: dict[str, Any], *, path: Path) -> None:
             f"{path}: the run stopped at staging, before any database was changed, "
             f"so it left nothing to repair",
             at=AT_REPAIR,
-            hint="run `creds rotate` again (UC-1 §8, a failure at step 4)",
+            hint=(
+                "run `creds apply` where the run staged a `pending`, which applies and "
+                "promotes it; otherwise run `creds rotate` again (UC-1 §8, a failure at "
+                "step 4)"
+            ),
         )
 
 

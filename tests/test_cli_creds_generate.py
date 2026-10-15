@@ -21,7 +21,7 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from sopuli.cli import cli
+from sopuli.cli import _refuse_discard, cli
 from sopuli.clock import utc_now
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
@@ -36,7 +36,7 @@ from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.passwords import ByteLimit
 from sopuli.payload import ORIGIN, PENDING, PREVIOUS
 from sopuli.store import MemoryStore, SecretStore
-from sopuli.store.protocol import MetadataNotPermittedError
+from sopuli.store.protocol import MetadataNotPermittedError, StoreError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -209,7 +209,7 @@ def test_a_second_run_replaces_pending_and_reports_a_change(
     run(runner, config)
     first = staged(store)
 
-    body = document(run(runner, config, "--output", "json"))
+    body = document(run(runner, config, "--overwrite-pending", "--output", "json"))
 
     assert staged(store)["acme_web_user"] != first["acme_web_user"]
     assert all(entry["changed"] is True for entry in body["results"])
@@ -224,10 +224,223 @@ def test_replacing_a_staged_password_warns_that_it_did(
     config = write_config(CONFIG)
     run(runner, config)
 
-    body = document(run(runner, config, "--output", "json"))
+    body = document(run(runner, config, "--overwrite-pending", "--output", "json"))
 
     warnings = body["results"][0]["warnings"]
     assert any("replaced a pending" in one["message"] for one in warnings)
+
+
+def test_a_staged_pending_is_refused_without_the_flag(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """#769: an `apply` may be putting that `pending` on a database right now.
+    Drawing over it would leave the database with a password the vault has
+    nowhere. Exit 8, as for `--overwrite-current`: an authorisation is missing."""
+    config = write_config(CONFIG)
+    run(runner, config)
+    first = staged(store)
+
+    result = run(runner, config)
+
+    assert refused(result) == ExitCode.ABORTED
+    assert isinstance(result.exception, ConfigError)
+    assert "acme_batch_user, acme_web_user" in str(result.exception)
+    assert "creds apply" in (result.exception.hint or "")
+    assert "--overwrite-pending" in (result.exception.hint or "")
+    assert staged(store) == first, "nothing was written"
+
+
+def test_only_the_accounts_with_a_pending_are_named(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """A neighbour in the same document with nothing staged is not part of the
+    refusal, and naming it would send somebody looking for a `pending` that
+    is not there."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+
+    result = run(runner, write_config(CONFIG))
+
+    assert refused(result) == ExitCode.ABORTED
+    assert "(acme_web_user)" in str(result.exception)
+
+
+def test_a_dry_run_over_a_pending_is_not_refused_and_says_what_the_run_would_do(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """A preview is how somebody finds out they need the flag."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert (
+        "a `pending` is already staged for acme_web_user; the run refuses without "
+        "--overwrite-pending" in result.output
+    )
+    assert staged(store) == {"acme_web_user": "an-earlier-staged-one"}
+
+
+def test_a_pending_that_appears_after_the_plan_is_not_discarded(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-check under the lock. A `pending` staged between the plan-time
+    read and the lock is one nobody knew to authorise discarding."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: ({}, {}))
+
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert {entry["state"] for entry in found["results"]} == {"ERROR"}
+    assert "after the plan" in found["results"][0]["actions"][0]["detail"]
+    assert staged(store) == {"acme_web_user": "an-earlier-staged-one"}, "nothing was written"
+
+
+def test_a_dry_run_names_a_document_it_could_not_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preview that could not read a document cannot say there is no
+    `pending` in it, and silence would say exactly that."""
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: ({}, {}))
+
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "whether a `pending` is staged there is not known" in result.output
+
+
+def test_a_pending_found_under_the_lock_still_announces_the_draws(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    events: Draft202012Validator,
+) -> None:
+    """The same stream as `--promote`'s refusal under the lock: the passwords
+    were drawn, so they are announced, and no write is sent."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: ({}, {}))
+
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl").stdout, events)
+
+    drawn = [line["account"] for line in lines if line["event"] == "password.generated"]
+    assert drawn == ["acme_web_user", "acme_batch_user"]
+    assert "vault.write" not in names(lines)
+
+
+def test_a_promote_over_a_pending_needs_the_flag_too(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """`--promote` clears `pending`, so it discards one just as a second draw
+    does. `--overwrite-current` is a different authorisation and does not
+    cover it."""
+    run(runner, write_config(CONFIG))
+    first = staged(store)
+
+    result = run(runner, write_config(CONFIG), "--promote", "--overwrite-current")
+
+    assert refused(result) == ExitCode.ABORTED
+    assert isinstance(result.exception, ConfigError)
+    assert "--overwrite-pending" in (result.exception.hint or "")
+    assert staged(store) == first, "nothing was written"
+
+
+def test_a_promote_re_checks_the_pending_under_the_lock(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: ({}, {}))
+
+    found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert "--overwrite-pending" in found["results"][0]["actions"][0]["detail"]
+    assert staged(store) == {"acme_web_user": "an-earlier-staged-one"}, "nothing was written"
+
+
+def test_a_promote_that_discards_a_pending_warns_that_it_did(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The staging path's warning, for the same reason: anything holding the
+    discarded `pending` is now stale."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+
+    body = document(
+        run(runner, write_config(CONFIG), "--promote", "--overwrite-pending", "--output", "json")
+    )
+
+    by_account = {entry["account"]: entry for entry in body["results"]}
+    web = by_account["acme_web_user"].get("warnings", [])
+    batch = by_account["acme_batch_user"].get("warnings", [])
+    assert any("replaced a pending" in one["message"] for one in web)
+    assert not any("replaced a pending" in one["message"] for one in batch)
+
+
+def test_a_promote_missing_both_flags_names_both_in_one_refusal(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """Both sets are known at plan time, so the operator should not add one
+    flag only to be refused for the other."""
+    store.write(
+        PATH,
+        {
+            "DB_CREDENTIALS": {"acme_batch_user": "the-live-one"},
+            PENDING: {"acme_web_user": "an-earlier-staged-one"},
+        },
+        cas=0,
+    )
+
+    result = run(runner, write_config(CONFIG), "--promote")
+
+    assert refused(result) == ExitCode.ABORTED
+    assert isinstance(result.exception, ConfigError)
+    assert "(acme_web_user)" in str(result.exception)
+    assert "(acme_batch_user)" in str(result.exception)
+    hint = result.exception.hint or ""
+    assert "--overwrite-pending" in hint
+    assert "--overwrite-current" in hint
+
+
+def test_a_refusal_names_an_account_once(runner: CliRunner) -> None:
+    """One account bound on two targets that share a document is one account."""
+    key = LockKey(store="vault-prod", path=PATH)
+
+    with pytest.raises(ConfigError) as raised:
+        _refuse_discard({key: ("acme_web_user", "acme_web_user")}, current={})
+
+    assert str(raised.value).startswith(
+        "1 of the selected accounts already has a `pending` staged (acme_web_user)"
+    )
+
+
+def test_a_dry_run_says_why_it_could_not_read_a_document(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused token reads as a refused token, not as a document that might
+    have nothing in it."""
+
+    def refuse(path: str) -> None:
+        raise StoreError("permission denied")
+
+    monkeypatch.setattr(store, "read", refuse)
+
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "(permission denied)" in result.output
+    assert "whether a `pending` is staged there is not known" in result.output
 
 
 # --------------------------------------------------------------- the lock ---
@@ -294,7 +507,7 @@ def test_a_store_that_will_not_guard_the_path_says_so_where_it_can_be_read(
     # would meet the exit-5 refusal instead -- which is the correct next thing to
     # happen and is asserted in `tests/lock/test_manager.py`, not here.
     store.paths.pop(lock_path(LockKey(store="vault-prod", path=PATH)), None)
-    body = document(run(runner, write_config(CONFIG), "--output", "json"))
+    body = document(run(runner, write_config(CONFIG), "--overwrite-pending", "--output", "json"))
 
     assert "SOPULI-W019" in [one["code"] for one in body["diagnostics"]]
 
@@ -544,7 +757,7 @@ def test_only_the_accounts_that_had_a_pending_are_told_it_was_replaced(
     """
     store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
 
-    body = document(run(runner, write_config(CONFIG), "--output", "json"))
+    body = document(run(runner, write_config(CONFIG), "--overwrite-pending", "--output", "json"))
 
     by_account = {entry["account"]: entry for entry in body["results"]}
     web = by_account["acme_web_user"].get("warnings", [])
@@ -938,6 +1151,7 @@ def test_reuse_is_warned_about_only_when_a_password_was_supplied(
             runner,
             write_config(CONFIG),
             "--from-stdin",
+            "--overwrite-pending",
             "--output",
             "json",
             stdin="SuppliedPassw0rdForAcme1\n",
@@ -1215,7 +1429,7 @@ def test_a_promote_clears_a_pending_that_would_otherwise_win(
     run(runner, write_config(CONFIG))  # stage a pending for both accounts
     assert set(staged(store)) == {"acme_web_user", "acme_batch_user"}
 
-    run(runner, write_config(CONFIG), "--promote", "--overwrite-current")
+    run(runner, write_config(CONFIG), "--promote", "--overwrite-current", "--overwrite-pending")
 
     found = store.read(PATH)
     assert found is not None
@@ -1234,7 +1448,7 @@ def test_a_current_that_appears_after_the_plan_is_not_overwritten(
     was told there was none -- which is the one case the flag cannot have
     authorised, because nobody knew to pass it."""
     seed_current(store, acme_web_user="the-live-one")
-    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: ({}, {}))
 
     found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
 
@@ -1270,7 +1484,7 @@ def test_a_failed_promote_is_not_reported_as_a_pending_write(
     is sitting there waiting for `apply`, when nothing was written at all.
     """
     seed_current(store, acme_web_user="the-live-one")
-    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: ({}, {}))
 
     found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
     entry = found["results"][0]
@@ -1383,7 +1597,7 @@ def test_jsonl_and_json_describe_the_same_generation(
     _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
     config = write_config(CONFIG)
     lines = stream(run(runner, config, "--output", "jsonl").stdout, events)
-    body = document(run(runner, config, "--output", "json"))
+    body = document(run(runner, config, "--overwrite-pending", "--output", "json"))
 
     assert lines[-1]["data"] == {"summary": body["summary"], "exit_code": body["exit_code"]}
     resolved = next(line["data"] for line in lines if line["event"] == "constraints.resolved")
@@ -1536,7 +1750,7 @@ def test_a_promotion_refused_before_its_write_still_announces_the_draws(
     store.write(PATH, {"DB_CREDENTIALS": {"acme_web_user": "Existing-Current-Value-1"}}, cas=0)
     # The plan-time read sees nothing, which is the race the in-lock re-check
     # exists for: somebody wrote `current` between the plan and the lock.
-    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: ({}, {}))
 
     lines = stream(
         run(runner, write_config(CONFIG), "--promote", "--output", "jsonl").stdout, events

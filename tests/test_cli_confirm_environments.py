@@ -222,7 +222,7 @@ def reached(result: Result) -> list[str]:
 #: 1), so the setting can only ever make its gate weaker. Its own suite covers
 #: that, and a case here would assert the wrong reason for the right outcome.
 VERBS = [
-    pytest.param(["creds", "generate"], id="generate"),
+    pytest.param(["creds", "generate", "--overwrite-pending"], id="generate"),
     pytest.param(["creds", "apply"], id="apply"),
     pytest.param(["creds", "finish-rollover"], id="finish-rollover"),
 ]

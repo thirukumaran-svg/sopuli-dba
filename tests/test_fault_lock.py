@@ -1,6 +1,6 @@
 """Fault injection: two runs contend for one lock (`04-testing.md` §5).
 
-Two rows of §5's table, through ``sopuli creds rotate`` against a real
+Three rows of §5's table, through ``sopuli creds rotate`` against a real
 database:
 
 * two rotations of one account at once. One loses the lock and exits 7, having
@@ -9,7 +9,10 @@ database:
 * a lock taken over mid-run. The first run's lock expires, a second run takes
   it over, and the first run's next fence check finds it. The first run stops
   before its ``ALTER USER``, exits 4 with ``SOPULI-W011``, and promotes
-  nothing.
+  nothing;
+* a ``pending`` already staged (#769). A rotation that reads one refuses, and
+  one whose lock is taken over by a run that stages one loses its staging
+  write's compare-and-set. Neither stages over it.
 
 ``tests/store/test_lock_concurrency.py`` makes the same claims about the lock
 manager alone. These make them about the command: its exit codes, its
@@ -214,3 +217,80 @@ def test_a_run_whose_lock_is_taken_over_stops_before_its_alter_user(
     assert promoted["DB_CREDENTIALS"][ACCOUNT] == staged["pending"][ACCOUNT]
     assert ACCOUNT not in promoted.get("pending", {})
     assert fault_estate.login(staged["pending"][ACCOUNT])
+
+
+def test_a_rotation_over_a_staged_pending_refuses_and_apply_finishes_it(
+    fault_estate: Estate, vault_stack: Any
+) -> None:
+    """#769's case at its first step: a `pending` is staged when the rotation
+    reads the document, so the rotation refuses and stages nothing.
+
+    The lost password in #769 needed a stalled `rotate` to stage over a `pending`
+    that a takeover `apply` had just set on the database. The refusal stops
+    that `rotate` at its plan, before its write, so the write is never sent.
+    """
+    direct = fault_estate.config(vault_stack.addr)
+    rotated = fault_estate.sopuli(direct, "creds", "rotate", "--confirm")
+    assert rotated.returncode == ExitCode.SUCCESS, rotated.stderr
+    current = fault_estate.read(SECRET)[0]["DB_CREDENTIALS"][ACCOUNT]
+    generated = fault_estate.sopuli(direct, "creds", "generate", "--offline")
+    assert generated.returncode == ExitCode.SUCCESS, generated.stderr
+    staged, version = fault_estate.read(SECRET)
+    pending = staged["pending"][ACCOUNT]
+
+    refused = fault_estate.sopuli(direct, "creds", "rotate", "--confirm")
+
+    assert refused.returncode == ExitCode.ABORTED, refused.stderr
+    assert f"{ACCOUNT} already has a `pending` staged" in refused.stderr
+    assert "sopuli creds apply" in refused.stderr
+    assert fault_estate.read(SECRET) == (staged, version), "the refused run wrote the document"
+    assert fault_estate.login(current)
+    record, _ = fault_estate.read(LOCK)
+    assert record["state"] == "released"
+
+    finished = fault_estate.sopuli(direct, "creds", "apply", "--confirm")
+    assert finished.returncode == ExitCode.SUCCESS, finished.stderr
+    assert fault_estate.read(SECRET)[0]["DB_CREDENTIALS"][ACCOUNT] == pending
+    assert fault_estate.login(pending)
+
+
+def test_a_pending_staged_by_a_takeover_fails_the_stalled_rotation_s_write(
+    fault_estate: Estate, vault_stack: Any, pause: Pause
+) -> None:
+    """#769's case where the stall comes after the plan. The rotation read no
+    `pending`, so it did not refuse. Then its lock expired and a `generate`
+    took it over and staged one.
+
+    The stalled write carries the version the rotation read, so the store
+    refuses it. The rotation stops as a staging failure and applies nothing,
+    and the takeover's `pending` survives for `apply` to finish.
+    """
+    direct = fault_estate.config(vault_stack.addr)
+    rotated = fault_estate.sopuli(direct, "creds", "rotate", "--confirm")
+    assert rotated.returncode == ExitCode.SUCCESS, rotated.stderr
+    current = fault_estate.read(SECRET)[0]["DB_CREDENTIALS"][ACCOUNT]
+    paused = pause()
+
+    fault_estate.expire_lock()
+    takeover = fault_estate.sopuli(
+        fault_estate.config(vault_stack.addr, break_expired=True),
+        "creds",
+        "generate",
+        "--offline",
+    )
+    assert takeover.returncode == ExitCode.SUCCESS, takeover.stderr
+    staged, version = fault_estate.read(SECRET)
+    pending = staged["pending"][ACCOUNT]
+
+    first = paused.finish()
+
+    assert first.returncode == ExitCode.FAILURE, first.stderr
+    rows = json.loads(first.stdout)["results"]
+    assert [row["state"] for row in rows] == ["ERROR"]
+    assert fault_estate.read(SECRET) == (staged, version), "the stalled write landed"
+    assert fault_estate.login(current), "the stalled run reached ALTER USER"
+
+    finished = fault_estate.sopuli(direct, "creds", "apply", "--confirm")
+    assert finished.returncode == ExitCode.SUCCESS, finished.stderr
+    assert fault_estate.read(SECRET)[0]["DB_CREDENTIALS"][ACCOUNT] == pending
+    assert fault_estate.login(pending)

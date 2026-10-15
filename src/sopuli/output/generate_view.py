@@ -148,7 +148,8 @@ def _warnings(
     Three things qualify, and each is a consequence an operator did not type:
 
     * **a replaced ``pending``** -- the previous staged password is gone, and if
-      it had been handed to anybody it is now worthless. Safe, per UC-1 §4, and
+      it had been handed to anybody it is now worthless. Authorised by
+      `--overwrite-pending` (UC-1 §4), on a staging run or a `--promote`, and
       not silent;
     * **a replaced ``current``** -- `--promote` wrote over the field applications
       read (decision #257). Authorised, since `--overwrite-current` is what let
