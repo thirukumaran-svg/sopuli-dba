@@ -1742,6 +1742,33 @@ and the next. A renewal is itself a write, so it goes behind the fence like ever
 other write. So the boundary catches a takeover *before* the next target's first
 statement, not after it.
 
+**The check and the write are two requests**, and the tool accepts the window
+between them (decided in [#769](../decisions/log.md#769)). Vault has no
+compare-and-set across two paths, so a fence check on the lock and a write to the
+secret cannot be one operation. A takeover can land after the check and before
+the write. A renewal writes the lock itself, with a compare-and-set on its fence,
+so a takeover makes that write fail. Its one window is between locks: with
+several locks held, lock 1 can be rewritten before the renewal finds lock *n*
+taken.
+
+For a staging write, this is what follows. The stale run's write lands, so
+`pending` holds a new random password that nobody has. The stale run's next
+fence check fails before its `ALTER USER`, so it changes no database, and it
+promotes nothing. The next `apply` applies that `pending` and promotes it.
+
+If the run that took over is a `rotate` and the stale write lands before that
+run reads the document, the new run refuses over the `pending` (§8). If it lands
+between that run's read and its own staging write, the staging write fails its
+compare-and-set: exit 1, and the row is `ERROR` with `category: vault`.
+
+```
+compare-and-set failed at 'acme/dev/acme': check-and-set parameter did not match the current version
+```
+
+It applied nothing. The message names a conflict, not the takeover. Running it
+again refuses over the stale run's `pending`, and `apply` applies and promotes
+that `pending`. `tests/test_fault_lock.py` produces these cases.
+
 **A lock error is never a finding for one target.** Anything else that goes wrong
 with one account becomes a row in the table, and the run carries on. Here that
 would be wrong: it would turn "somebody else owns this estate now" into a
@@ -1896,12 +1923,12 @@ invariant 5: the write lands under the store's `locks/` prefix, in a store that
 | Fails at | State afterwards | Recovery |
 |---|---|---|
 | 1–3 | nothing changed | fix and run again |
-| 4 | nothing changed in the database; `pending` may exist | `apply` where a `pending` was staged, which applies and promotes it; otherwise run `rotate` again |
+| 4 | nothing changed in the database; `pending` may exist | `apply` where a `pending` was staged, which applies and promotes it; otherwise run `rotate` again. A staging write that passed its fence can land after a takeover. Its `pending` holds a password that nobody has, and the next `apply` applies and promotes it (*How the fence is checked*) |
 | 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair` with the run's document, then `apply` to promote (§5, *A repair of a rotation*); with the rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **the most severe case**: `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
 | 8 | promoted, and the read-back disagreed or failed | the databases are converged, and the run cannot confirm that the vault serves what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts, and the store's message for a document it could not read. Nothing needs undoing; the place to look is the vault, not any database: a replica behind its primary, or a store that stopped answering |
-| any fence check, at 4–7 | another run took this run's lock; what this run already applied stands | abort at once, change nothing more, exit **7** if nothing had been applied and **4** if something had, with `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
+| any fence check, at 4–7 | another run took this run's lock; what this run already applied stands | abort at once, change nothing more, exit **7** if nothing had been applied and **4** if something had, with `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it. A write that passed its fence check before the takeover still lands, so `pending` can hold this run's password |
 
 ### How `rotate` is built
 

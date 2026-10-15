@@ -1178,7 +1178,10 @@ the register.
   it an exception to invariant 9 (idempotency)?
 - **Decision:** It is outside the invariant. A second `generate` replaces
   `pending` and reports `changed: true`. H7 later restated this as a scope rule
-  covering every verb that draws fresh randomness.
+  covering every verb that draws fresh randomness. [#769](#769) later made the
+  replacement need `--overwrite-pending`. Without the flag, a second `generate`
+  refuses over a staged `pending`. With it, the run still reports
+  `changed: true`, so this ruling on invariant 9 stands.
 - **Why:** Invariant 9 governs convergent commands. Drawing a fresh password has
   no fixed point to converge on.
 - **Rejected:**
@@ -2097,3 +2100,45 @@ the register.
     `reset_records.vault`.
   - A command-line flag to go ahead without the lock. It adds one more flag in
     front of a guardrail, and removing `reset_records:` already does this.
+
+## #769
+
+- **Decided:** 2026-10-15, #769
+- **Question:** `creds rotate` checks its fence and then writes the secret
+  document, in two requests. A takeover can land between them, and the write
+  still goes through. Should the tool close that window, report it, or accept
+  it?
+- **Decision:** Accept the window, and never stage over a `pending` (#804).
+  `creds rotate` and `creds generate` refuse where a selected account already
+  has one. `generate --overwrite-pending` discards it, for an operator who
+  means to. UC-1 §4 and §8 state the rule, the window and what follows.
+- **Why:** Vault has no compare-and-set across two paths, so the fence check
+  on the lock and the write to the secret cannot be one operation. As first
+  decided, the window looked safe: what lands in it is a `pending` that holds a
+  random password nobody has, the stale run's next fence check stops it before
+  its `ALTER USER`, and the next `apply` applies and promotes that `pending`.
+  The review of PR #803 found the case that is not safe. A `pending` is staged;
+  a takeover `apply` sets it on the database; the stale `rotate` stages over
+  it; the `apply`'s promotion then loses its compare-and-set. The database
+  holds a password the vault has nowhere. That was reproduced on tier 1 on 3
+  runs out of 3. With the refusal, the stale run's write can land only where
+  its own read, under its lock, found no `pending`. A `pending` staged after
+  that read changes the document's version, so the stale write loses its
+  compare-and-set. The accepted cost is unchanged: if the run that took over is
+  a `rotate`, the stale write can make that run's staging compare-and-set fail.
+  It exits 1 and applies nothing, and it can be run again, but its error names a
+  conflict and not the takeover. `tests/test_fault_lock.py` produces each case.
+  The refusal changes [#254](#254): it rejected a sticky `pending` because the
+  flag would cost the ordinary case, a password that went into a ticket. That
+  cost is now paid, because the alternative loses a password.
+- **Rejected:**
+  - Write the lock's version into the secret document, and have `apply`
+    refuse or ignore a `pending` written under an older fence. It is the only
+    option that closes the window. But it changes the secret document's format,
+    and it needs a rule for documents written before the change. The harm it
+    prevents is that a password nobody holds gets applied, which is not worth
+    that cost.
+  - Check the fence again after the write, and report a `pending` that landed
+    after a takeover. It costs one more read per document, and it closes
+    nothing: removing the `pending` would be another write with the same
+    window.

@@ -423,6 +423,7 @@ recovery, not only that the tool did not crash:
 | two `rotate` runs on one account at once | one loses the lock and exits 7; the final state is consistent |
 | steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`: no database gets its password, and `current` is not promoted. A write that passed its fence check before the takeover still lands, so `pending` can hold the stale run's password. The run exits 4 with `SOPULI-W011`, and the next run to hold the lock applies that `pending` |
 | a `pending` already staged when a rotation reads its document, or staged by a run that takes its lock over while its staging write is held | the rotation stages nothing over it. Staged before the read: it refuses on exit 8 and names the account. Staged after: the held write loses its compare-and-set, and the run exits 1 with nothing applied. Either way, `creds apply` then applies and promotes that `pending` (#769) |
+| as above, but the run that takes over is a `rotate`, and it is held at its own staging write while the stale write lands | the stale run stops as above, exit 4 with `SOPULI-W011`. The new holder's staging write fails its compare-and-set on the version it read: exit 1, a row in `ERROR` with `category: vault` and a message that names the conflict, not the takeover. Neither run changes a database, and `current` is not promoted |
 | kill a run that holds a lock, then start another | by default the second run refuses with exit 7, and reports the holder and that the lock has expired. Breaking a lock is not self-service. Under `locking.break_expired`, the second run takes the lock with a compare-and-set write that increases the version, which fences the killed run if it ever resumes |
 | the vault returns a stale read after the promotion | the post-verify step catches it: exit 4 with `SOPULI-W012`, not success |
 
@@ -450,7 +451,7 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 | the two kill rows | `tests/test_fault_kill.py` |
 | vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py` |
 | PDB closed, `ALTER USER` revoked | `tests/test_fault_database.py`. The PDB row creates a second PDB and drops it afterwards. Both recoveries are tested: plain `creds apply`, and `creds apply --repair` with the `rotate` document followed by `creds apply` |
-| two runs at once, a lock taken over, a `pending` already staged | `tests/test_fault_lock.py`. In the takeover row, the run that takes the lock over is a `creds apply` with nothing to do, because a second `rotate` would write the secret document, and the paused run's staging write would then lose its compare-and-set before it reached the fence. The `pending` row's second case is that loss, with a `creds generate` taking the lock over |
+| two runs at once, a lock taken over, a takeover by `rotate`, a `pending` already staged | `tests/test_fault_lock.py`. In the takeover row, the run that takes the lock over is a `creds apply` with nothing to do, so it writes no secret document. In the `rotate` row, a second gate holds the new holder's staging write until the stale write has landed. In the `pending` row's second case, a `creds generate` takes the lock over |
 
 ---
 

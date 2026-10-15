@@ -1,6 +1,6 @@
 """Fault injection: two runs contend for one lock (`04-testing.md` §5).
 
-Three rows of §5's table, through ``sopuli creds rotate`` against a real
+Four rows of §5's table, through ``sopuli creds rotate`` against a real
 database:
 
 * two rotations of one account at once. One loses the lock and exits 7, having
@@ -10,7 +10,10 @@ database:
   it over, and the first run's next fence check finds it. The first run stops
   before its ``ALTER USER``, exits 4 with ``SOPULI-W011``, and promotes
   nothing;
-* a ``pending`` already staged (#769). A rotation that reads one refuses, and
+* the same takeover by a ``rotate``. The first run's staging write lands after
+  the takeover, and the new holder's own staging write then fails its
+  compare-and-set. It exits 1 and changes nothing (#769);
+* a ``pending`` already staged (#804). A rotation that reads one refuses, and
   one whose lock is taken over by a run that stages one loses its staging
   write's compare-and-set. Neither stages over it.
 
@@ -294,3 +297,75 @@ def test_a_pending_staged_by_a_takeover_fails_the_stalled_rotation_s_write(
     assert finished.returncode == ExitCode.SUCCESS, finished.stderr
     assert fault_estate.read(SECRET)[0]["DB_CREDENTIALS"][ACCOUNT] == pending
     assert fault_estate.login(pending)
+
+
+def test_a_held_staging_write_that_lands_after_a_takeover_fails_the_new_holders_rotate(
+    fault_estate: Estate, vault_stack: Any, pause: Pause
+) -> None:
+    """The window #769 accepts: the fence check and the staging write are two requests.
+
+    A first rotation runs to the end. A second stalls at its staging write, with
+    its fence check already passed, until its lock expires. A third rotation
+    under ``locking.break_expired`` takes the lock over, reads the document, and
+    is held at its own staging write. The stalled write then lands: it bumps the
+    document's version, and the stalled run's next fence check stops it. The new
+    holder's staging write then fails its compare-and-set on the version it read.
+
+    Neither run changes the database, and ``current`` is not promoted. The new
+    holder's error names a conflict, not the takeover. The stalled run's
+    ``pending`` is left for ``apply``: a new rotation refuses over it (#804).
+    """
+    direct = fault_estate.config(vault_stack.addr)
+    rotated = fault_estate.sopuli(direct, "creds", "rotate", "--confirm")
+    assert rotated.returncode == ExitCode.SUCCESS, rotated.stderr
+    before, _ = fault_estate.read(SECRET)
+    current = before["DB_CREDENTIALS"][ACCOUNT]
+    stalled = pause()
+    fault_estate.expire_lock()
+
+    gate = VaultGate(
+        vault_stack.addr,
+        f"/v1/{fault_estate.mount}/data/{SECRET}",
+        Fault.PAUSE_WRITE,
+        writes=STAGING,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            run = pool.submit(
+                fault_estate.sopuli,
+                fault_estate.config(gate.addr, break_expired=True),
+                "creds",
+                "rotate",
+                "--confirm",
+            )
+            if not gate.tripped.wait(TIMEOUT):
+                raise HarnessError(f"the takeover never reached its staging write; {gate.seen}")
+
+            first = stalled.finish()
+            _, landed = fault_estate.read(SECRET)
+            gate.release()
+            takeover = run.result(timeout=TIMEOUT)
+        finally:
+            gate.close()
+
+    assert first.returncode == ExitCode.PARTIAL, first.stderr
+    lost = [one for one in json.loads(first.stdout)["diagnostics"] if one.get("code") == LOCK_LOST]
+    assert len(lost) == 1, first.stdout
+    record, _ = fault_estate.read(LOCK)
+    assert record["state"] == "released"
+    assert record["command"] == "creds rotate"
+    taker = record["holder"]["pid"]
+    assert taker != stalled.pid, "the third run did not take the lock over"
+    assert _names(lost[0]["message"], taker, "creds rotate"), lost[0]["message"]
+    assert takeover.returncode == ExitCode.FAILURE, takeover.stderr
+    (row,) = json.loads(takeover.stdout)["results"]
+    assert row["state"] == "ERROR"
+    assert row["changed"] is False
+    assert row["error"]["category"] == "vault"
+    assert "compare-and-set failed" in row["error"]["message"]
+    # The stalled run's write is the one that landed: the takeover wrote nothing after it.
+    staged, version = fault_estate.read(SECRET)
+    assert version == landed, "the takeover's staging write landed"
+    assert staged["DB_CREDENTIALS"][ACCOUNT] == current, "promoted after a takeover"
+    assert staged["pending"][ACCOUNT] != current
+    assert fault_estate.login(current), "a run changed the password"
