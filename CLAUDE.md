@@ -257,7 +257,7 @@ the REST `requested_reviewers` list omits bots.
 ## Git identity & commits
 
 - Never hand-type an author or sign-off email. Use the configured `git config user.email` (the GitHub noreply address). Never use a personal gmail.
-- Use the conventional commit prefixes feat:, fix:, docs:, test: and refactor:. Never use `!` (breaking) unless the user explicitly says so.
+- Use the conventional commit prefixes feat:, fix:, docs:, test:, refactor:, chore: and ci:. Never use `!` (breaking) unless the user explicitly says so.
 - Never use --no-verify.
 - Do not start long-running test runs and then stash or switch branches in the same worktree.
 
