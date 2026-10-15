@@ -33,6 +33,7 @@ from sopuli.driver.protocol import (
     PASSWORD_EXPIRE,
     ROLLOVER_FINISH,
     AccountChange,
+    AuditCoverage,
     DriverError,
     PartialAccountChangeError,
     UserState,
@@ -78,6 +79,10 @@ class FakeSession:
 
     def byte_limit(self) -> None:
         """A `reset-password` preview asks it. `None` is a target with no limit."""
+
+    def audit_coverage(self, account: str) -> AuditCoverage:
+        """An unseen `reset-password` preview asks it (H10)."""
+        return AuditCoverage(audited=None, detail="not read")
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
         self.expired.append(account)

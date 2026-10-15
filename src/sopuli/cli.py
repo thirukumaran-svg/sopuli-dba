@@ -165,6 +165,7 @@ from sopuli.driver.protocol import (
     AccountAttributes,
     AccountChange,
     AttributeChange,
+    AuditCoverage,
     DriverError,
     Encryption,
     PartialAccountChangeError,
@@ -267,9 +268,9 @@ from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.preflight_view import caveat_notes, render_preflight
+from sopuli.output.reset_view import audited_value, render_password
 from sopuli.output.reset_view import build_result as build_reset_result
 from sopuli.output.reset_view import render as render_reset
-from sopuli.output.reset_view import render_password
 from sopuli.output.reset_view import summarise as summarise_reset
 from sopuli.output.rotate_view import render_rotate, render_selection_table
 from sopuli.output.status_view import build_result as build_status_result
@@ -2449,6 +2450,7 @@ def _write_reset_record(
     expired: bool,
     secret: Secret,
     token: Secret | None = None,
+    audited: AuditCoverage | None = None,
 ) -> _RecordFailure | None:
     """Journal one reset, or say why it could not be (UC-2 §3.1).
 
@@ -2501,6 +2503,8 @@ def _write_reset_record(
         delivery=reset_record.Delivery(method=delivery.method, to=accessor),
         by=current_holder(),
         correlation_id=run.document.correlation_id,
+        audited=audited_value(audited) if audited is not None else None,
+        audited_detail=audited.detail if audited is not None else None,
     )
     document = record.to_dict()
     # Invariant 2 against the serialised document rather than against the
@@ -2632,6 +2636,10 @@ class _Reset:
     #: a frozen dataclass's generated ``__repr__`` beside `shown`'s. One carrier for
     #: the secret is enough to reason about.
     handover: Handover | None = None
+    #: Whether the database audits the DBA's routes to acting as the person
+    #: (UC-2 §1, H10). ``None`` on the seen path, which does not check, and on a
+    #: row that stopped before the check.
+    audited: AuditCoverage | None = None
 
     def as_json(self) -> dict[str, Any]:
         return build_reset_result(
@@ -2646,6 +2654,7 @@ class _Reset:
             overridden=self.overridden,
             duration_ms=self.duration_ms,
             error=self.error,
+            audited=self.audited,
         )
 
 
@@ -2779,6 +2788,15 @@ def _reset_one(
                 duration_ms=_elapsed(started),
             )
 
+        # **Whether the database audits the DBA's routes to this person** (UC-2
+        # §1, H10), on the unseen path only: the seen path's exposure does not
+        # depend on audit. Recorded and never acted on, so it is asked before
+        # the preview returns, and it cannot fail the row: the driver answers
+        # "unknown" for a read it could not make. `decision.proceed` means the
+        # account was found, so `state` is not None here.
+        assert state is not None
+        audited = None if delivery.is_seen else session.audit_coverage(state.name)
+
         # **Both of a reset's own refusals are asked before the preview returns**
         # (#671), so a dry run that says "would be reset" means the real run
         # gets past them too. Both are reads: UC-2 4.3's rollover refusal, which
@@ -2804,6 +2822,7 @@ def _reset_one(
                 overridden=overridden,
                 duration_ms=_elapsed(started),
                 error=reported,
+                audited=audited,
             )
 
         if preview:
@@ -2824,6 +2843,7 @@ def _reset_one(
                 overridden=overridden,
                 would_reset=True,
                 duration_ms=_elapsed(started),
+                audited=audited,
             )
 
         try:
@@ -2875,6 +2895,7 @@ def _reset_one(
                             started=started,
                         ),
                         encryption=sent if _carried(error) else None,
+                        audited=audited,
                     )
                 changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
@@ -2890,6 +2911,7 @@ def _reset_one(
                 duration_ms=_elapsed(started),
                 error=reported,
                 encryption=sent if _carried(error) else None,
+                audited=audited,
             )
 
         # The row is built **before** the hand-over, and that is not style.
@@ -2928,6 +2950,7 @@ def _reset_one(
             overridden=overridden,
             duration_ms=_elapsed(started),
             encryption=sent,
+            audited=audited,
         )
 
         def journalled(one: _Reset) -> _Reset:
@@ -2951,6 +2974,7 @@ def _reset_one(
                     expired=decision.expire,
                     secret=secret,
                     token=receipt.token if receipt is not None else None,
+                    audited=audited,
                 ),
             )
 

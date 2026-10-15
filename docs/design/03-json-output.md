@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.37.schema.json`](../schemas/sopuli-run-1.37.schema.json),
+Schemas: [`../schemas/sopuli-run-1.38.schema.json`](../schemas/sopuli-run-1.38.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -348,6 +348,7 @@ This sketch shows the run document's shape:
   plan       { units[], shared_secrets[], confirmation_required, blast_radius },
   lock       { mode, held[], found[], broken, denied },
   results    [ { account, target, scope, secret, state, delivered, handover,
+                 audited, audited_detail,
                  account_status, changed, actions[], verification, rollover,
                  password_age_days, started_at, duration_ms, error, warnings[],
                  overridden[], redraws, declared_by, reset_at } ],
@@ -1646,6 +1647,37 @@ unseen method will have its own kind of handle for the same fact.
   have shortened below what the file asked for. It is reported and never
   enforced. The store already enforces the TTL, and a second clock would only
   disagree with it.
+
+**`audited`** says whether the database audits the DBA's routes to acting as the
+person (UC-2 §1): `true`, `false` or `"unknown"`. **`audited_detail`** says why:
+the policies that record each action, the action nothing records, or what
+stopped the tool from telling. `02-oracle-privileges.md` §5 says how the policies
+are read. From a tier-1 run, with a `LOGON, ALTER USER` policy enabled:
+
+```json
+"audited": true,
+"audited_detail": "LOGON by ACME_ROUTE_POL; ALTER USER by ACME_ROUTE_POL"
+```
+
+and with no policy enabled:
+
+```json
+"audited": false,
+"audited_detail": "no enabled policy records LOGON or ALTER USER for ACME_DEV_ALICE"
+```
+
+- **`"unknown"` is a string, not `null`.** The decision (H10) names three
+  values, and a `null` reads as a field nobody filled in. A reading the tool
+  could not finish, such as a policy view the service account cannot read, is
+  `"unknown"` and never `false`.
+- **The tool records it and acts on nothing.** No warning and no refusal follow
+  from any of the three values.
+- **Both fields are present on an unseen reset, preview included**, on every row
+  the guardrails let through. That includes an `ERROR` row from a later step,
+  such as the reset's own rollover-window or byte-limit refusal. They are absent
+  on the seen path, whose exposure does not depend on audit, and on a row that
+  stopped before the check: an account that is missing, or one the guardrails
+  refused.
 
 **`account expire-password` rows** carry `password_expire`, the bare
 `ALTER USER … PASSWORD EXPIRE`. That statement sets no password, so it cannot

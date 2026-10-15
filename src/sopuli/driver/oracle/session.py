@@ -55,6 +55,7 @@ from sopuli.driver.oracle.accounts import (
     resolve_role,
     stored_verifiers,
 )
+from sopuli.driver.oracle.audit import coverage_of
 from sopuli.driver.oracle.capabilities import (
     assert_scope,
     cloud_service_of,
@@ -123,6 +124,7 @@ from sopuli.driver.protocol import (
     AccountAttributes,
     AccountChange,
     AttributeChange,
+    AuditCoverage,
     ChangeResult,
     Credential,
     DriverError,
@@ -351,6 +353,25 @@ class OracleSession:
             with traced_cursor(self.connection) as cursor:
                 self._limit = resolve_limit(cursor, self.scope().db_version)
         return self._limit
+
+    def audit_coverage(self, account: str) -> AuditCoverage:
+        """Whether enabled audit policies record the DBA's routes to ``account``.
+
+        Not cached: it is asked once per reset, and an estate may enable a policy
+        between two runs. Never raises -- :func:`coverage_of` turns a failed read
+        into an answer that says so, and this turns a cursor that cannot be opened
+        or closed, such as on a connection that dropped, into the same.
+        """
+        try:
+            with traced_cursor(self.connection) as cursor:
+                return coverage_of(cursor, account)
+        except Exception as error:  # noqa: BLE001 -- the protocol promises an answer
+            diagnosis = from_error(error)
+            return AuditCoverage(
+                audited=None,
+                detail=f"the audit check could not use the connection: "
+                f"{diagnosis.code or 'no code'}: {diagnosis.message}",
+            )
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         """Issue the ``ALTER USER``, and let a rejection be a rejection.

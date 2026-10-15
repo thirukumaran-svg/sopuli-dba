@@ -106,6 +106,8 @@ def test_there_is_no_field_a_password_could_go_in() -> None:
         "delivery",
         "by",
         "correlation_id",
+        "audited",
+        "audited_detail",
     }
 
 

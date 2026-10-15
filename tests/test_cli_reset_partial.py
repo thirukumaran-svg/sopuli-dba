@@ -37,6 +37,7 @@ from sopuli.driver.protocol import (
     PASSWORD_SET,
     ROLLOVER_FINISH,
     AccountChange,
+    AuditCoverage,
     DriverError,
     Encryption,
     PartialAccountChangeError,
@@ -128,6 +129,8 @@ class FakeSession:
         #: An encrypted connection by default, so SOPULI-W031/W032 stay out of
         #: tests about something else.
         self.encryption = Encryption(method=ENCRYPTION_TLS, protocol="tcps")
+        #: What the audit check answers; a test about it sets its own.
+        self.audited = AuditCoverage(audited=True, detail="LOGON by P; ALTER USER by P")
 
     def describe_user(self, account: str) -> UserState | None:
         return UserState(name=account.upper(), status=self.status)
@@ -137,6 +140,9 @@ class FakeSession:
 
     def require_no_rollover_window(self, account: str) -> None:
         return None
+
+    def audit_coverage(self, account: str) -> AuditCoverage:
+        return self.audited
 
     def byte_limit(self) -> None:
         return None
@@ -879,3 +885,146 @@ def test_a_forced_reset_that_fails_keeps_the_override_on_its_row(
     row = _row(result)
     assert row["state"] == "ERROR"
     assert row["overridden"], "the override was dropped from the failed row"
+
+
+# ------------------------------------------------- what the database audits ---
+#
+# H10. An unseen reset records whether the database audits the DBA's routes to
+# acting as the person, on its row and in its record. It acts on nothing.
+
+
+class Asked(Succeeding):
+    """A session that remembers which accounts the audit check was asked about."""
+
+    def __init__(self, status: str, fail: Exception) -> None:
+        super().__init__(status, fail)
+        self.asked: list[str] = []
+
+    def audit_coverage(self, account: str) -> AuditCoverage:
+        self.asked.append(account)
+        return super().audit_coverage(account)
+
+
+def test_an_unseen_reset_records_what_the_database_audits(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The row and the record carry the same answer, and the check is asked
+    about the name the database stores."""
+    session = Asked("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    row = _row(result)
+    assert row["audited"] is True
+    assert row["audited_detail"] == "LOGON by P; ALTER USER by P"
+    assert session.asked == [ACCOUNT.upper()]
+    assert sent.records[0]["audited"] == session.audited
+
+
+def test_the_schema_holds_the_two_fields_together(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """`audited_detail` is present exactly when `audited` is, and the schema, not
+    only the emitter, says so: a document with one and not the other is invalid."""
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=True)
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+    validator = Draft202012Validator(json.loads(RUN_SCHEMA.read_text(encoding="utf-8")))
+
+    for dropped in ("audited", "audited_detail"):
+        document = json.loads(result.stdout)
+        del document["results"][0][dropped]
+        assert list(validator.iter_errors(document)), f"a row without {dropped} passed"
+
+
+def test_the_record_writes_the_answer_as_the_document_does(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real writer, into a journal, read back: `"unknown"` is the string, not
+    `null`, and `audited_detail` travels with it. No `sent` fixture here, because
+    it replaces the writer this test is about."""
+    journal = MemoryStore()
+    monkeypatch.setattr("sopuli.cli._reset_journal", lambda run, config: journal)
+    session = Succeeding("OPEN", DENIED)
+    session.audited = AuditCoverage(audited=None, detail="the audit policy views are not readable")
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(JOURNALLED), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    stored = journal.read(f"sopuli/personal-resets/{TARGET}/{ACCOUNT}")
+    assert stored is not None, "nothing was journalled"
+    assert stored.data["audited"] == "unknown"
+    assert stored.data["audited_detail"] == "the audit policy views are not readable"
+
+
+def test_an_answer_the_driver_could_not_give_is_unknown_and_the_reset_goes_ahead(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """`unknown` is a string in the document, never `null` and never `false`, and
+    it neither warns nor refuses: H10 records and does not act."""
+    session = Succeeding("OPEN", DENIED)
+    session.audited = AuditCoverage(audited=None, detail="the audit policy views are not readable")
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.stdout)
+    row = _row(result)
+    assert row["state"] == "RESET"
+    assert row["audited"] == "unknown"
+    assert row["audited_detail"] == "the audit policy views are not readable"
+    assert not [one for one in document["diagnostics"] if "audit" in one["message"]]
+
+
+def test_an_unseen_preview_says_what_the_real_run_would_record(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The check is a read, so a `--dry-run` asks it, as it asks the reset's two
+    refusals (#671)."""
+    session = Asked("OPEN", DENIED)
+    session.audited = AuditCoverage(audited=False, detail="no enabled policy records LOGON")
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    row = _row(result)
+    assert row["audited"] is False
+    assert session.reset == []
+
+
+def test_the_seen_path_does_not_ask(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The seen path's exposure does not depend on audit, so its row has no
+    `audited` and the database is not asked."""
+    session = Asked("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(MANUAL), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    row = _row(result)
+    assert "audited" not in row
+    assert "audited_detail" not in row
+    assert session.asked == []
+
+
+def test_a_refused_row_does_not_ask(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """A row the guardrails refused never reaches the check, so it says nothing
+    about audit rather than describing a reset that did not happen."""
+    session = Asked("LOCKED", DENIED)
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    row = _row(result)
+    assert row["state"] == "SKIPPED"
+    assert "audited" not in row
+    assert session.asked == []

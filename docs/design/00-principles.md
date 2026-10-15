@@ -32,6 +32,7 @@ Session
   reset_password(account, secret, expire, keep_rollover) -> AccountChange[]   # UC-2 §4.1
   expire_password(account) -> AccountChange[]   # UC-2: change at next logon
   require_no_rollover_window(account) -> None   # refuses, or returns
+  audit_coverage(account) -> AuditCoverage      # UC-2 §1: never raises
   apply_attributes(account, attributes) -> AttributeChange[]   # UC-1 §5
   resolve_profile(profile) -> str | None        # how this database spells it, if it has it
   resolve_role(role) -> str | None

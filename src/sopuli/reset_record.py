@@ -111,6 +111,12 @@ class ResetRecord:
     delivery: Delivery
     by: Holder | None = None
     correlation_id: str | None = None
+    #: Whether the database audits the DBA's routes to acting as the person,
+    #: as the run document's ``audited`` says it (UC-2 §1, H10): ``True``,
+    #: ``False`` or ``"unknown"``. ``None`` on the seen path, which does not check.
+    audited: bool | str | None = None
+    #: Why, in the driver's words. Present exactly when ``audited`` is.
+    audited_detail: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The document to write.
@@ -120,7 +126,8 @@ class ResetRecord:
         written null, per UC-2 §3.1. ``by`` and ``correlation_id`` are omitted
         the same way -- a record whose runner could not be described says so by
         having no ``by``, which is what :meth:`Holder.from_dict` already reads
-        back as "nothing readable there".
+        back as "nothing readable there". ``audited`` and ``audited_detail`` are
+        omitted on the seen path, which does not check.
         """
         data: dict[str, Any] = {
             "account": self.account,
@@ -134,6 +141,9 @@ class ResetRecord:
             data["by"] = self.by.to_dict()
         if self.correlation_id is not None:
             data["correlation_id"] = self.correlation_id
+        if self.audited is not None:
+            data["audited"] = self.audited
+            data["audited_detail"] = self.audited_detail
         return data
 
 
@@ -230,6 +240,8 @@ RECORD_KEYS = frozenset(
         "delivery",
         "by",
         "correlation_id",
+        "audited",
+        "audited_detail",
     }
 )
 

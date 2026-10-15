@@ -455,3 +455,86 @@ def test_an_install_without_the_grant_still_describes_accounts(
     but a role predicate -- and its privilege audit is short of nothing."""
     assert installed_without_role_lookup.describe_user(ACCOUNT) is not None
     assert _audit(installed_without_role_lookup).missing == ()
+
+
+# --------------------------------------------- whether a reset is audited ---
+#
+# H10. `02-oracle-privileges.md` §2's optional grant and §5's three answers,
+# asked as the service account, because the grant is the account's.
+
+#: §2's optional grant for the audit check: `READ` on the two policy views.
+AUDIT_GRANTS = (
+    f"grant READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES to {ACCOUNT}",
+    f"grant READ ON SYS.AUDIT_UNIFIED_POLICIES to {ACCOUNT}",
+)
+
+#: The person whose reset would be checked. The policies here are enabled for
+#: every user, so the name only has to be one.
+PERSON = "ACME_DEV_ALICE"
+
+#: Not `AC_`, which `sql/oracle/13_audit_coverage_probe.sql` cleans up, and not
+#: `SOPULI_`, which `01_audit_policy.sql` creates.
+POLICY = "acme_route_pol"
+
+
+@pytest.fixture
+def audit_reader(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
+    """§2's account with the optional grant for the audit check taken."""
+    with _installed(sysdba, live_oracle, *AUDIT_GRANTS) as opened:
+        yield opened
+
+
+@contextlib.contextmanager
+def _policy(sysdba: Any, actions: str) -> Iterator[None]:
+    """An audit policy enabled for every user, then disabled and dropped."""
+    with contextlib.suppress(Exception):
+        execute(sysdba, f"noaudit policy {POLICY}")
+    with contextlib.suppress(Exception):
+        execute(sysdba, f"drop audit policy {POLICY}")
+    execute(sysdba, f"create audit policy {POLICY} actions {actions}", f"audit policy {POLICY}")
+    try:
+        yield
+    finally:
+        execute(sysdba, f"noaudit policy {POLICY}", f"drop audit policy {POLICY}")
+
+
+def test_without_the_grant_the_answer_is_unknown_and_names_it(service_account: Any) -> None:
+    """The default install cannot read the policy views (`ORA-00942`, measured),
+    and that is never `false`: the answer names the grant that would let it tell."""
+    found = service_account.audit_coverage(PERSON)
+
+    assert found.audited is None
+    assert "GRANT READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES" in found.detail
+
+
+def test_a_policy_recording_both_routes_for_every_user_is_true(
+    audit_reader: Any, sysdba: Any
+) -> None:
+    """The positive case, with the grant: the answer names the policy for both
+    actions."""
+    with _policy(sysdba, "logon, alter user"):
+        found = audit_reader.audit_coverage(PERSON)
+
+    assert found.audited is True, found.detail
+    assert f"LOGON by {POLICY.upper()}" in found.detail
+    assert f"ALTER USER by {POLICY.upper()}" in found.detail
+
+
+def test_nothing_recording_logons_is_false_on_a_unified_only_database(
+    audit_reader: Any, sysdba: Any
+) -> None:
+    """`false` needs both facts §5 names: unified auditing only, and no enabled
+    policy that covers or might cover `LOGON`. This database's own policies and
+    mode decide both, so the test asks the check first, before adding its own
+    policy, and skips with the check's own reason where the answer is not
+    `false` already. A precondition written as a separate query would have to
+    repeat §5's rules, and would drift from them."""
+    before = audit_reader.audit_coverage(PERSON)
+    if before.audited is not False:
+        pytest.skip(f"this database's own audit state is not false: {before.detail}")
+
+    with _policy(sysdba, "alter user"):
+        found = audit_reader.audit_coverage(PERSON)
+
+    assert found.audited is False, found.detail
+    assert found.detail == f"no enabled policy records LOGON for {PERSON}"

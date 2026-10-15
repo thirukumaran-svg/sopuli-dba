@@ -1121,8 +1121,8 @@ probing looks like.
 An unseen reset records `audited: true | false | unknown` (UC-2 §1). The value
 says whether enabled unified audit policies record the two routes by which a DBA
 can act as the person: an `ALTER USER`, and a logon as the person. The check
-reads the policies once per target, before the password is drawn. This is not
-built yet (open: #591).
+reads the policies once per target, before the password is drawn.
+`sopuli/driver/oracle/audit.py` implements the rules below.
 
 **A list of users applies to the account that issues the statement.**
 `sql/oracle/13_audit_coverage_probe.sql` measured this on 26ai 23.26.2.0.0. One
@@ -1150,10 +1150,13 @@ cover** it. Then:
 
 - `true`: a policy covers `LOGON`, and a policy covers `ALTER USER`. One policy
   that covers an action settles it, whatever the other policies say.
-- `unknown`: an action that no policy covers has a policy that might cover it.
-  The result names that policy and why.
 - `false`: no policy covers or might cover one of the actions, and the database
-  uses unified auditing only (see below).
+  uses unified auditing only (see below). **This wins over a doubt about the
+  other action**: the route through the uncovered action is certainly not
+  recorded, so a doubt about the other route cannot make it `unknown`.
+- `unknown`: every action that no policy covers has a policy that might cover
+  it. The result names what covers each covered action, and why each uncovered
+  one might be recorded.
 
 A policy **covers** an action when all of these hold:
 
@@ -1201,12 +1204,18 @@ so it does not guess:
   container's trail. It did record a common account's logon to the PDB. So a
   common DBA account taking the route might be recorded, and a local one is
   not.
-- **It has a row of a kind the probe has not measured.** That is any
-  `SYSTEM PRIVILEGE` row other than `ALTER USER`, any `ROLE PRIVILEGE` row, and
-  any type other than `STANDARD ACTION`, `SYSTEM PRIVILEGE`, `OBJECT ACTION` and
-  `XS ACTION`. For example, `PRIVILEGES CREATE SESSION` may record logons, and
-  `ROLES DBA` may record an `ALTER USER` made through the role. Nobody has
-  measured either.
+- **It has a row of a kind the probe has not measured.** A `SYSTEM PRIVILEGE`
+  row records the statements that use the privilege. A logon uses
+  `CREATE SESSION`, so `PRIVILEGES CREATE SESSION` might record `LOGON`. No
+  other privilege is used by either route, so no other `SYSTEM PRIVILEGE` row
+  counts. Any `ROLE PRIVILEGE` row might record either action: `ROLES DBA` may
+  record an `ALTER USER` made through the role. So might a row of any type other
+  than `STANDARD ACTION`, `SYSTEM PRIVILEGE`, `OBJECT ACTION` and `XS ACTION`.
+  Nobody has measured these. For `LOGON`, such a row counts only where the
+  policy is enabled for the person: a policy that records nothing the person
+  issues cannot record their logon.
+- **It is enabled in a way the probe has not seen.** That is an
+  `ENABLED_OPTION` other than the three in the table above.
 
 A policy **does not cover** an action in every other case. These are the
 common ones:
@@ -1226,6 +1235,11 @@ on 12.1 and later), traditional auditing might record the action, so the value
 is `unknown`. 11.2 has no unified auditing, so the value is `unknown` there too.
 Neither case has been measured. [measurements](../measurements.md) lists the
 releases the probe has run on.
+
+The check reads `ENABLED_OPTION` and `ENTITY_NAME`, which the probe measured on
+26ai. A release whose view lacks them answers `ORA-00904`, and the value is then
+`unknown` with a detail that says so. That is not measured on any release
+either.
 
 On a PDB install, the two policies that `01_audit_policy.sql` creates give
 `false`. `sopuli_pol` covers `ALTER USER` for every user. `sopuli_logon_pol`

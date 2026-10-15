@@ -36,6 +36,7 @@ from typing import Any
 from sopuli.clock import to_rfc3339
 from sopuli.delivery import Handover
 from sopuli.driver.guardrails import Refusal
+from sopuli.driver.protocol import UNKNOWN, AuditCoverage
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
@@ -94,6 +95,7 @@ def build_result(
     overridden: Sequence[Refusal] = (),
     duration_ms: int | None = None,
     error: Error | None = None,
+    audited: AuditCoverage | None = None,
 ) -> dict[str, Any]:
     """One ``results[]`` entry.
 
@@ -134,6 +136,12 @@ def build_result(
     ``changed`` is whether the password was set. It is always ``True`` on a
     successful reset: invariant 9 does not govern this verb (H7), because a
     fresh random draw has nothing to converge on.
+
+    ``audited`` is whether the database audits the DBA's routes to acting as the
+    person (UC-2 §1, H10): ``true``, ``false`` or ``"unknown"``, with
+    ``audited_detail`` saying why. Both are absent on the seen path, whose
+    exposure does not depend on audit, and on a row that never got as far as the
+    check.
     """
     entry: dict[str, Any] = {
         "account": account,
@@ -162,6 +170,9 @@ def build_result(
                 to_rfc3339(handover.expires_at) if handover.expires_at is not None else None
             ),
         }
+    if audited is not None:
+        entry["audited"] = audited_value(audited)
+        entry["audited_detail"] = audited.detail
     if overridden:
         entry["overridden"] = [
             {"check": refusal.check, "reason": refusal.reason} for refusal in overridden
@@ -171,6 +182,15 @@ def build_result(
     if error is not None:
         entry["error"] = error.to_dict()
     return entry
+
+
+def audited_value(audited: AuditCoverage) -> bool | str:
+    """``audited`` as the run document and the reset record write it.
+
+    ``"unknown"`` rather than ``null``, because the H10 decision names three
+    values, and a ``null`` reads as a field nobody filled in.
+    """
+    return UNKNOWN if audited.audited is None else audited.audited
 
 
 def summarise(states: Sequence[str], *, changed: int) -> Summary:

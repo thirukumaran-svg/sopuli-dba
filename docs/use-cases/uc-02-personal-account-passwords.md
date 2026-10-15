@@ -67,9 +67,9 @@ other targets, and wherever they reused it. A proxy grant is per database, and a
 password is not.
 
 **An unseen reset records whether the database audits the DBA's routes**, as
-`audited` in the reset record and in the run document's result (decided
+`audited` in the reset record (§3.1) and in the run document's result (decided
 in H10). It does not warn and it does not refuse. The tool creates no audit
-policy. This is not built yet (open: #591). There are three values:
+policy. There are three values:
 
 - `true`: enabled audit policies record the person's logons, and every user's
   `ALTER USER`.
@@ -455,17 +455,24 @@ The record holds what happened:
 
 ```json
 {"account": "acme_dev_alice",
- "by": {"host": "dba-ws-4.example.com", "os_user": "dba01", "pid": 45180},
- "correlation_id": "06aec33c-e88b-4f36-ba25-3a4b0fedaed3",
+ "audited": true,
+ "audited_detail": "LOGON by ACME_ROUTE_POL; ALTER USER by ACME_ROUTE_POL",
+ "by": {"host": "dba-ws-4.example.com", "os_user": "dba01", "pid": 98004},
+ "correlation_id": "65ca65a5-5a05-49a4-9c80-8814c13234f2",
  "delivery": {"method": "vault_wrapped", "to": "PYfXbFKBlw3U0ieUm0lvdCkY"},
  "expired": false,
- "reset_at": "2026-10-06T13:13:03.981152Z",
+ "reset_at": "2026-10-15T18:55:14.059388Z",
  "seen": false,
  "target": "free-pdb"}
 ```
 
 That record is from a tier-1 run, with the host and the operating-system user
 replaced.
+
+**`audited` and `audited_detail` are what §1 describes**: whether the database
+audits the DBA's routes to acting as the person, and why. They are the run
+document's two fields, written the same way. A seen reset's record has neither,
+because the seen path does not check.
 
 **On `vault_wrapped`, `to` is the wrapping token's *accessor*.** The accessor
 above is a made-up example. A real one is what Vault returns beside the token. It

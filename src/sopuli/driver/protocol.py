@@ -192,6 +192,27 @@ class Encryption:
     hint: str | None = None
 
 
+# ---------------------------------------------------------------- auditing ---
+
+
+@dataclass(frozen=True)
+class AuditCoverage:
+    """Whether the database audits the DBA's routes to acting as one person.
+
+    UC-2 §1 and H10. ``audited`` is ``True`` where enabled audit policies record
+    the person's logons and every user's ``ALTER USER``, ``False`` where they
+    certainly do not, and ``None`` where the driver could not tell. ``None`` is
+    the run document's ``"unknown"``, and a driver never answers ``False`` for
+    something it could not read.
+
+    ``detail`` says why, in the product's own words: which policies cover the two
+    actions, which action nothing covers, or what stopped the driver from telling.
+    """
+
+    audited: bool | None
+    detail: str
+
+
 # ------------------------------------------------------------ verification ---
 
 VERIFY_LOGIN = "login"
@@ -1065,6 +1086,19 @@ class Session(Protocol):
         :class:`PartialAccountChangeError`**, carrying the close. By then the old
         password is already dead and cannot be revived, and a caller that saw only
         an exception would report the account as untouched.
+        """
+        ...
+
+    def audit_coverage(self, account: str) -> AuditCoverage:
+        """Whether the database audits the DBA's routes to acting as ``account``.
+
+        The unseen reset records the answer (UC-2 §1, H10). It never warns and
+        never refuses on it, so this **never raises**: a read that fails is an
+        answer of ``audited=None`` with the reason, as a connection's encryption
+        is. A run must not stop over a fact it only records.
+
+        ``account`` is the name as the database stores it, from
+        :meth:`describe_user`.
         """
         ...
 
