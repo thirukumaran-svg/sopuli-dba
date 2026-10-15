@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.36.schema.json`](../schemas/sopuli-run-1.36.schema.json),
+Schemas: [`../schemas/sopuli-run-1.37.schema.json`](../schemas/sopuli-run-1.37.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -2583,10 +2583,9 @@ which builds can emit what.
 **A shape may be published before the code that fills it.** A section or a
 property in the schema that nothing emits yet constrains nothing, and it gives a
 decision one written form in the file CI validates against. An enum value for a
-verb whose existence is still open may also stay in the schema:
-`admin.install` does, because whether the command exists is not decided
-(open: #655).
-`tests/test_cli_precedence.py` keeps that list.
+verb whose existence is still open may also stay in the schema.
+`RESERVED_COMMANDS` in `tests/test_cli_precedence.py` lists each such value.
+The list is empty today.
 
 **Removing an enum value that no released build has ever emitted is minor.** No
 document has ever carried it, so removing it cannot break a reader. The test is
@@ -2601,8 +2600,11 @@ three:
   name.
 - It does not cover a value for a verb not built *yet*. It covers a verb that was
   **declined**: `creds.promote` was removed under this rule, because UC-1 §4 says
-  there is no `creds promote` and there will not be one. A slot for something
-  that might arrive is honest. A branch nothing can ever reach is not.
+  there is no `creds promote` and there will not be one. `admin.install` was
+  removed in 1.37, because [#655](../decisions/log.md#655) declined
+  `admin install`. UC-4 may install the service account, but with a verb of its
+  own, not this one. A slot for something that might arrive is honest. A branch
+  nothing can ever reach is not.
 
 **Renaming a property that a released build emits is major**, with no
 exception.

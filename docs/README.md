@@ -57,7 +57,7 @@ on which Oracle release, and what it showed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-2.0.schema.json](schemas/sopuli-config-2.0.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.36.schema.json](schemas/sopuli-run-1.36.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-run-1.37.schema.json](schemas/sopuli-run-1.37.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.8.schema.json](schemas/sopuli-event-1.8.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -237,7 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | The reset lock when journal and delivery are different vaults | open | | #516 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
-| — | — | What does `sopuli admin install` do, if anything? | open | | #655 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.
@@ -487,11 +486,18 @@ If the answer here is yes, the privilege belongs to a principal this use case
 defines, not to UC-1's service account.
 
 *Deferred to it:* Q8 (`apply` does not create a missing account), the creating
-and altering of profiles, and UC-1 §5's default and temporary tablespace
-attribute (#303). `ALTER USER … DEFAULT TABLESPACE` moves no existing segment,
-so during a rotation it is a half-change that looks complete. During
-provisioning the account has no objects yet, so it is simply part of creating
-the account.
+and altering of profiles, UC-1 §5's default and temporary tablespace
+attribute (#303), and how the tool's own service account is installed (#655).
+
+`ALTER USER … DEFAULT TABLESPACE` moves no existing segment, so during a
+rotation it is a half-change that looks complete. During provisioning the
+account has no objects yet, so it is simply part of creating the account.
+
+Installing the service account is provisioning too, and it needs SYSDBA or an
+equivalent account, which the tool otherwise never holds. A DBA runs
+`sql/oracle/00_install.sql` for it. [#655](decisions/log.md#655) declined an
+`admin install` command. This use case decides whether provisioning covers the
+install, and in what form.
 
 ### UC-5 — drift and compliance reporting across a fleet
 

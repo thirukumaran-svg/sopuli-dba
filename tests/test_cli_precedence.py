@@ -680,11 +680,10 @@ def test_every_verb_names_a_command_the_schema_allows(path: str, command: click.
 #: to keep. This is that list, and the test below is why keeping it is cheap:
 #: it fails on an enum value that belongs to no verb and is not named here, as
 #: `creds.promote` would, for a verb `uc-01-app-credential-sync.md` §4 declines
-#: (decision #392).
+#: (decision #392), and as `admin.install` would, for a verb #655 declines.
 #:
-#: `admin.install` is reserved until the decision on whether the command exists
-#: (TODO(#655)).
-RESERVED_COMMANDS = frozenset({"admin.install"})
+#: Nothing is reserved today.
+RESERVED_COMMANDS: frozenset[str] = frozenset()
 
 
 def test_the_command_enum_names_nothing_that_is_not_coming() -> None:
@@ -705,7 +704,7 @@ def test_the_command_enum_names_nothing_that_is_not_coming() -> None:
 def test_nothing_reserved_has_quietly_been_built() -> None:
     """The list above stops being documentation the moment a verb arrives.
 
-    Without this, `admin install` could ship and leave a comment claiming it is
+    Without this, a reserved verb could ship and leave a comment claiming it is
     still planned.
     """
     built = {".".join(path.split()[1:]) for path, _ in commands()}

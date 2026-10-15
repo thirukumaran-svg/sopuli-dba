@@ -2041,3 +2041,32 @@ the register.
   name, and no directory path other than `TNSNAMES`. In every other case its
   only honest output is "not in the file I could read", and that is not worth
   the code.
+
+## #655
+
+- **Decided:** 2026-10-14, #655
+- **Question:** What does `sopuli admin install` do, if anything? The run
+  schema's `command` enum held `admin.install` from the first commit, but no
+  document said what the command does.
+- **Decision:** No `admin install` command. A DBA installs the service account
+  by running `sql/oracle/00_install.sql` as SYSDBA or an equivalent account.
+  `admin.install` is removed from the enum in run schema 1.37. The verb is
+  declined and no build ever emitted it, so the removal is minor
+  (`03-json-output.md` §8). UC-4 decides whether provisioning covers installing
+  the service account. If it does, that is a UC-4 verb with its own name, and
+  adding it to the enum is a minor bump.
+- **Why:** The command would add the most by generating the service account's
+  password and writing it to the vault first. That is also the expensive part.
+  It needs a credential the tool otherwise never holds, SYSDBA or an
+  equivalent. It also needs an order for the vault write and `CREATE USER`, and
+  a plan for when one succeeds and the other fails (invariant 7, UC-1 §3).
+  Creating the service account is provisioning, and UC-4 must define a
+  privileged principal for provisioning anyway. So the question belongs there.
+- **Rejected:**
+  - Print the script with its values filled in, for a DBA to review and run.
+    A DBA already passes the script's few values directly, so this saves
+    little.
+  - A full install now: a credential to run it, config for the script's mode,
+    tablespace and grants, and a plan, `--dry-run` and `changed: false` on a
+    second run. It is the largest new privilege surface since UC-1, for a step
+    done once per database.
