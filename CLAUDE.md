@@ -12,6 +12,14 @@ document before you change the behaviour it governs.
 
 ---
 
+## Shell & file editing
+
+- Never write or modify source files through bash heredocs, sed, or inline python -c scripts. Use the Edit/Write tools instead. Heredocs repeatedly mangled \n escapes, regex backreferences, pipes in Markdown tables and control bytes.
+- Preserve existing line endings (LF). Never introduce CRLF changes that inflate diffs.
+- Never pipe pytest through grep to judge pass/fail. The report hook suppresses the summary line and grep masks the exit code. Check the pytest exit code directly.
+
+---
+
 ## Read before changing behaviour
 
 `docs/design/00-principles.md` is **binding**. A use case may refine it; nothing
@@ -243,6 +251,15 @@ fixes are small and need no second review.
 `copilot-pull-request-reviewer[bot]` through the REST endpoint; GraphQL's
 `requestReviews` cannot request a bot. Confirm the request with GraphQL, because
 the REST `requested_reviewers` list omits bots.
+
+---
+
+## Git identity & commits
+
+- Never hand-type an author or sign-off email. Use the configured `git config user.email` (the GitHub noreply address). Never use a personal gmail.
+- Use the conventional commit prefixes feat:, fix:, docs:, test: and refactor:. Never use `!` (breaking) unless the user explicitly says so.
+- Never use --no-verify.
+- Do not start long-running test runs and then stash or switch branches in the same worktree.
 
 ---
 
