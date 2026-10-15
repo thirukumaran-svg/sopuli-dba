@@ -208,6 +208,37 @@ the register.
   - Arbitrary expressions: a reviewer would have to evaluate code to know where
     a password goes.
 
+## C4
+
+- **Decided:** 2026-10-14, #640
+- **Question:** How does a configuration give one account in an application
+  entry a different setting from the other accounts in that entry?
+- **Decision:** It does not. An application entry has no per-account
+  exceptions. An account that needs a different `policy`, `oracle` block or
+  anything else goes in an application entry of its own. The loader refuses
+  the two shapes someone would try, with a hint that says to write a second
+  entry: an `accounts:` item that is a mapping, and an `account` or `accounts`
+  key under `overrides[].where`, whatever the targets' labels are.
+- **Why:** A second entry costs nothing to write. With a secret path of its own,
+  it also gives the account its own document, and so its own promotion
+  (UC-1 §5), which is usually what an account with different rules wants. A
+  per-account form would add a second resolution axis to `bindings.py` and the
+  §2 resolution table, beside `overrides:`, for a case the existing grammar
+  already covers. Before this, `where: { account: … }` was accepted as a label
+  match. `where:` matches a whole target, so it cannot single out an account.
+  Where no target had the label, the override matched nothing and its exception
+  silently did not apply. Where one did, it patched every account on that
+  target. So the key is refused whatever the labels say, and a target label
+  with that name has to be renamed to be matched in `where:`.
+- **Rejected:**
+  - A map form in `accounts:` (`[{name: x, policy: y}]`): it changes the config
+    schema and the resolution chain.
+  - An account matcher in `where:`: `where` matches labels, and this would mix
+    two kinds of key in one matcher.
+  - Allowing `account` in `where:` where some target carries that label: a test
+    of the key alone ignores the label's value and the application's own
+    targets, and a real match patches every account on the target.
+
 ## C5
 
 - **Decided:** 2026-10-03, #615

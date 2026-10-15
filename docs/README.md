@@ -171,7 +171,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | C1 | 01 | Name of the binding section | decided | `applications`, with an inline form | |
 | C2 | 01 | Selector syntax | decided | `--select k=v` over labels, and `match:` in groups | #615 |
 | C3 | 01 | Arbitrary expressions in secret templates? | decided | no; a fixed token list plus labels | #615 |
-| C4 | 01 | Per-account overrides in an application entry | open | per-label cases are covered; per-account is not | #640 |
+| C4 | 01 | Per-account overrides in an application entry | decided | none; write a second application entry | #640 |
 | C5 | 01 | Config encryption at rest | decided | out of scope; the config holds no secrets | #615 |
 | C6 | 01 | Several vaults for one application (mirror writes) | deferred | to a later use case | |
 | C7 | 01 | More than two `target_sets` nesting levels? | decided | no; write a second set | |

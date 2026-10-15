@@ -65,6 +65,17 @@ OVERRIDE_KEYS = ("where", "vault", "secret", "secret_template", "policy", "oracl
 
 ORACLE_KEYS = ("container_clause",)
 
+#: The way out of both C4 refusals: an application entry has no per-account
+#: exceptions, so an account with different settings gets an entry of its own.
+SPLIT_HINT = (
+    "an application entry has no per-account settings (C4): give this account an "
+    "application entry of its own, with the settings it needs"
+)
+
+#: Keys `where:` may not carry, because they name accounts and `where:` matches
+#: targets (C4).
+ACCOUNT_KEYS = ("account", "accounts")
+
 TARGET_SELECTOR_KEYS = ("group", "match")
 
 #: `{account}`, `{account_lower}`, `{account_upper}` -- the tokens that make a
@@ -166,7 +177,10 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
             hint="invariant 5: the config is the whitelist, so nothing is managed by default",
         )
 
-    accounts = string_list(entry["accounts"], at=at.key("accounts"))
+    accounts = tuple(
+        _account(item, at=at.key("accounts").index(index))
+        for index, item in enumerate(sequence(entry["accounts"], at=at.key("accounts")))
+    )
     if not accounts:
         raise ConfigError("must declare at least one account", at=at.key("accounts"))
 
@@ -183,6 +197,17 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
             )
         seen[account] = index
     return accounts
+
+
+def _account(item: Any, *, at: KeyPath) -> str:
+    """One `accounts:` item, which is a name.
+
+    A mapping is someone writing a per-account setting (C4), so its refusal
+    says what to write instead rather than only that the type is wrong.
+    """
+    if isinstance(item, dict):
+        raise ConfigError("an account is a name, not a mapping", at=at, hint=SPLIT_HINT)
+    return string(item, at=at)
 
 
 def _build_secret(entry: dict[str, Any], *, at: KeyPath) -> tuple[str | None, str | None]:
@@ -297,6 +322,13 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
     would be a selector that extends the whitelist, reached by a label match
     somewhere in the middle of a long file. Whatever the tool manages has to be
     readable from ``accounts:`` alone.
+
+    **``account`` and ``accounts`` are refused in ``where:``** (C4), whatever
+    the targets' labels say. ``where:`` matches a whole target, so it cannot
+    single out an account. Without a target that carries the label, the
+    override matches nothing and silently does not apply. With one, it patches
+    every account on that target, which is worse. A target label of that name
+    therefore has to be renamed to be matched here.
     """
     patch = mapping(raw, at=at)
     reject_unknown_keys(patch, allowed=OVERRIDE_KEYS, at=at)
@@ -307,6 +339,17 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
             at=at.key("where"),
             hint="`where: { env: dev }` -- an override matching everything is not an exception",
         )
+    if isinstance(patch["where"], dict):
+        for key in ACCOUNT_KEYS:
+            if key in patch["where"]:
+                raise ConfigError(
+                    "`where:` matches targets by label, so it cannot single out an account",
+                    at=at.key("where").key(key),
+                    hint=(
+                        f"{SPLIT_HINT}. If `{key}` is a label on your targets, rename the "
+                        "label: here it would patch every account on them"
+                    ),
+                )
 
     secret = optional_string(patch, "secret", at=at)
     secret_template = optional_string(patch, "secret_template", at=at)

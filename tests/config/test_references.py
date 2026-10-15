@@ -197,6 +197,50 @@ def test_an_application_naming_an_undeclared_policy_is_refused() -> None:
     assert "applications[0].policy" in rendered
 
 
+# ---------------------------------------- an account in `where:` (C4) ---
+
+
+def batch_override(key: str = "account") -> list[dict[str, Any]]:
+    """An application whose override tries to single out one account."""
+    return [
+        {
+            "name": "acme",
+            "accounts": ["acme_web_user", "acme_batch_user"],
+            "overrides": [{"where": {key: "acme_batch_user"}, "policy": "app-standard"}],
+        }
+    ]
+
+
+@pytest.mark.parametrize("key", ["account", "accounts"])
+@pytest.mark.parametrize(
+    "labels",
+    [{}, {"account": "acme_batch_user"}, {"accounts": "acme_batch_user"}],
+    ids=["unlabelled", "account-label", "accounts-label"],
+)
+def test_an_override_matching_an_account_by_name_is_refused(
+    key: str, labels: dict[str, str]
+) -> None:
+    """`where:` matches a whole target, so it cannot single out an account.
+    Without the label the override matches nothing; with it, the patch reaches
+    every account on the target. Both are refused, so a label of that name has
+    to be renamed to be matched here."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                targets=[{**TARGET, "labels": labels}],
+                policies=POLICIES,
+                applications=batch_override(key),
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "cannot single out an account" in rendered
+    assert f"applications[0].overrides[0].where.{key}" in rendered
+    hint = caught.value.hint or ""
+    assert "application entry of its own" in hint
+    assert f"If `{key}` is a label on your targets, rename the label" in hint
+
+
 def test_an_application_naming_an_undeclared_group_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(
