@@ -603,8 +603,19 @@ declaration, so the whole prefix is listed.
 answer means the lock cannot be taken. Nothing has happened yet, which is where
 UC-1's lock stores already stop a run. §3.4's absences are about a store that
 fails *after* the password changed; there the reset stands and a warning reports
-it. Whether a run should still go ahead when the journal's store is down and a
-different delivery store is up is open (open: #516).
+it.
+
+**This holds when the journal and the delivery use different stores** (decided
+in [#516](../decisions/log.md#516)). `delivery.vault_wrapped.vault` can name a
+store other than `reset_records.vault`, because §3.5 keeps the journal and the
+delivery apart. If the journal's store is down and the delivery's store is up,
+the run still refuses before any DDL. The delivery could work, but the run could
+not take its lock, and a reset without its lock would look like a locked one in
+the output.
+
+**To reset during a journal outage, remove `reset_records:`.** The run then takes
+no lock and writes no record, and `SOPULI-W024` says so at plan time (§3.4). The
+operator chooses this, and the run says what it does not have.
 
 **Where there is no store, there is no lock.** That is the other half of §3.1's
 cost, and the reason §3.4's warning says so, not only that no record is written.
@@ -1456,7 +1467,7 @@ absent (`04-testing.md`). They never branch on a version.
 | ~~H9~~ | ~~On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead?~~ | **closed** — attribution, not access; no second channel (§1, §6.8). Reasons: [H9](../decisions/log.md#h9) · #496 |
 | H10 | §1's attribution guarantee holds only where the database audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or record what it found? | #591, raised by §1 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6.5): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2's fourth exception · #439 |
-| — | When the reset journal's store and the delivery store are different vaults, and the journal's is down, does the run refuse or deliver without a lock and a record (§3.3)? | #516 |
+| ~~—~~ | ~~When the reset journal's store and the delivery store are different vaults, and the journal's is down, does the run refuse or deliver without a lock and a record (§3.3)?~~ | **closed** — it refuses before any DDL; to reset during a journal outage, remove `reset_records:` and `SOPULI-W024` says so (§3.3). Reasons: [#516](../decisions/log.md#516) · #516 |
 | — | Should the seen reset's rollover refusal narrow to accounts whose old password still authenticates (§4.3)? | #541 |
 
 §4.4's conflict between guardrail check 4 and DBA accounts is not a question with

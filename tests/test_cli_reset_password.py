@@ -1248,6 +1248,71 @@ def test_the_record_never_carries_the_token(
     assert token not in json.dumps(stored.json()["data"]["data"])
 
 
+def test_a_journal_store_that_is_down_refuses_even_when_the_delivery_store_is_up(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    free_tcp_port: int,
+) -> None:
+    """UC-2 3.3, decided in #516: the journal's store holds the lock.
+
+    The journal is a `vaults:` entry of its own, at an address nothing answers,
+    and the delivery names the store that is up. The delivery could work, and the
+    run still refuses before any DDL: a reset without its lock would print like
+    a locked one. An estate that must reset during a journal outage removes
+    `reset_records:`, and `SOPULI-W024` says at plan time that no lock is taken.
+
+    The old password still logging in is what shows that no DDL ran. An unseen
+    reset does not expire the account, so `OPEN` afterwards would prove nothing.
+    The address is a free port on the loopback interface, which refuses at once.
+    """
+    written = (
+        _wrapped_config(live_oracle, journal, private_mount)
+        .replace(
+            "  vault_wrapped:\n    ttl: 15m\n",
+            "  vault_wrapped:\n    ttl: 15m\n    vault: vault-dev\n",
+        )
+        .replace(
+            "\nreset_records:\n  vault: vault-dev\n",
+            f"""  vault-journal:
+    type: hashicorp
+    addr: http://127.0.0.1:{free_tcp_port}
+    mount: kv
+    kv_version: 2
+    auth:
+      method: token
+
+reset_records:
+  vault: vault-journal
+""",
+        )
+    )
+    assert "    vault: vault-dev\n" in written, "the delivery names no store of its own"
+    assert "  vault: vault-journal\n" in written, "the journal is still in the delivery's store"
+    before = account()
+
+    result = run(runner, write_config(written), "--account", ACCOUNT)
+
+    assert isinstance(result.exception, StoreError), result.exception
+    assert "could not reach the store" in str(result.exception)
+    assert account() == before == "OPEN"
+    assert _logs_in(live_oracle, OLD), "the reset ran without the lock it was told to take"
+    assert "hvs." not in result.output, "a password was handed over without the lock"
+
+
+def _logs_in(live_oracle: Environment, password: str) -> bool:
+    """Whether the account accepts ``password``, by a real logon."""
+    oracledb = pytest.importorskip("oracledb")
+    try:
+        oracledb.connect(user=ACCOUNT, password=password, dsn=live_oracle.dsn).close()
+    except oracledb.DatabaseError:
+        return False
+    return True
+
+
 # -------------------------------------------------------- the notify channel ---
 #
 # These tests drive the verb. The renderer and the sender have their own unit

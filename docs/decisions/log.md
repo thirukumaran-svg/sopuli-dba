@@ -2070,3 +2070,30 @@ the register.
     tablespace and grants, and a plan, `--dry-run` and `changed: false` on a
     second run. It is the largest new privilege surface since UC-1, for a step
     done once per database.
+
+## #516
+
+- **Decided:** 2026-10-15, #516
+- **Question:** UC-2's journal and its delivery can use different vaults. When
+  the journal's store is down and the delivery's store is up, should
+  `account reset-password` still refuse?
+- **Decision:** Yes. When `reset_records:` is declared and its store cannot be
+  reached, the reset refuses before any DDL, even when the delivery's store is
+  up. UC-2 §3.3 applies to two stores as it does to one.
+- **Why:** The journal's store holds the lock, and the lock is what stops two
+  DBAs from resetting the same person at once. A reset without its lock would
+  look like a locked one in the output, which is the failure #515's review
+  found. A journal vault outage is rare and short. An estate that must reset
+  during one can remove `reset_records:`: the run then takes no lock, and
+  `SOPULI-W024` says so at plan time. That way an operator chooses it.
+- **Rejected:**
+  - Go ahead with no lock, and warn. Neither `SOPULI-W024` nor `SOPULI-W025`
+    describes a store that was declared, could not be reached when the lock was
+    taken, and answered later. So this needs a third code, and it makes two
+    resets at once possible without anyone choosing that.
+  - Require the journal and the delivery to use the same store, at load time.
+    It forbids the split that UC-2 §3.5 describes. `01-configuration.md` §1
+    documents it under `delivery:`: `vault_wrapped.vault` does not fall back to
+    `reset_records.vault`.
+  - A command-line flag to go ahead without the lock. It adds one more flag in
+    front of a guardrail, and removing `reset_records:` already does this.
