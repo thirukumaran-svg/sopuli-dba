@@ -148,7 +148,6 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
 
 1. Confirm the `sqlnet.ora` mount path for the NNE service — it is image- and
    version-specific.
-2. Confirm which LocalStack tier includes Secrets Manager (T3).
 
 ## Gotchas found by actually running tier0 and tier1
 
@@ -199,8 +198,8 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
 - **Real OCI** — 19c, 26ai, ADB, OCI Vault. No emulator is faithful enough to be
   release evidence, and this is where Native Network Encryption and Autonomous
   behaviour are actually verified.
-- **Emulators** (`--profile emulators`: LocalStack, lowkey-vault) are smoke tests
-  only. A green emulator run is never a reason to cut a release.
+- **Emulators** (`--profile emulators`: lowkey-vault) are smoke tests only. A
+  green emulator run is never a reason to cut a release.
 
 The public test suite must be green using only what a contributor can pull —
 `tier0` and `tier1`. Anything needing more must skip with a reason, never fail.

@@ -89,13 +89,17 @@ the service limits that a fixed set of secrets can reach
 
 ### Emulators: smoke tests only
 
-The emulators are `localstack` (Secrets Manager; whether the free tier includes
-it is T3), `lowkey-vault` (Azure Key Vault, which has a Python example),
-`cameritelabs/oci-emulator` and Floci (OCI). A passing emulator test shows only
+The `emulators` profile in `test/compose.yaml` runs `lowkey-vault` (Azure Key
+Vault, which has a Python example). `cameritelabs/oci-emulator` and Floci
+emulate OCI, and neither is in the stack yet. A passing emulator test shows only
 that the code path runs. **The authoritative test for a cloud store is the real
 service.** That is what the OCI tenancy is for. Nobody knows or maintains the
 emulators' fidelity, so a green emulator test is never the reason to cut a
 release.
+
+There is no AWS emulator yet. An AWS Secrets Manager store gets moto's server
+image, `motoserver/moto`, not LocalStack, whose image needs an account token
+(unverified: moto-secrets-manager). Reasons: [T3](../decisions/log.md#t3).
 
 ### Two Oracle behaviours that containers do not give you
 
@@ -604,7 +608,7 @@ them is red.
 |---|---|---|
 | ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **decided: yes** (#1), `11.2.0.2-slim`, amd64 only. See §2. Reasons: [T1](../decisions/log.md#t1) |
 | ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **decided: compose** (#174). The harness starts nothing; `SOPULI_TEST_ORACLE_DSN` points it elsewhere. Reasons: [T2](../decisions/log.md#t2) |
-| T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
+| ~~T3~~ | ~~Is LocalStack Secrets Manager in the community tier?~~ | **decided: no** (#642). LocalStack needs an account token, so it is out; an AWS store gets moto. See §2. Reasons: [T3](../decisions/log.md#t3) |
 | ~~T4~~ | ~~Does OCI Vault cost enough to matter in a test loop?~~ | **decided: no** (#643). Tier 3 only, because it needs a tenancy. See §2. Reasons: [T4](../decisions/log.md#t4) |
 | ~~T5~~ | ~~Public CI provider~~ | **decided: GitHub Actions.** See `../workflow.md`. Reasons: [T5](../decisions/log.md#t5) |
 | T6 | Do we need a real Data Guard standby to test the read-only refusal? | probably: a closed PDB is not the same failure. Defer until a driver bug argues for it |

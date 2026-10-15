@@ -656,6 +656,28 @@ the register.
   - `testcontainers-python`: a second definition of the stack, which the tests
     and the by-hand stack could disagree on.
 
+## T3
+
+- **Decided:** 2026-10-14, #642
+- **Question:** Is Secrets Manager in LocalStack's free community image, so
+  that it can be the test emulator for an AWS store?
+- **Decision:** No. LocalStack is out: the `localstack` service is removed from
+  `test/compose.yaml`. When an AWS Secrets Manager store is built, its emulator
+  is moto's server image, `motoserver/moto`. The pull request that builds the
+  store checks that the image serves every call the store makes, against the
+  image itself and not its documentation.
+- **Why:** LocalStack has no free community image any more. From release
+  2026.03.0 the Community and Pro images are one image, and it needs an auth
+  token to start. The services it serves depend on the token's plan, and the
+  free Hobby plan is for non-commercial use only. The bypass,
+  `LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT`, ended on 2026-04-06. The public
+  suite runs only on images anyone can pull, and an image that needs a token
+  fails that rule whatever the plan. moto is open source, needs no token, and
+  emulates Secrets Manager. No test used the `localstack` service.
+- **Rejected:** Keeping LocalStack in tier 3 with a maintainer's Hobby token. It
+  puts a token in CI, and a project's test loop may not count as non-commercial
+  use.
+
 ## T4
 
 - **Decided:** 2026-10-14, #643
