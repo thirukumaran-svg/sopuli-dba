@@ -88,8 +88,11 @@ FORBIDDEN_PRIVILEGES = (
 FORBIDDEN_PREFIX = "GRANT ANY"
 
 #: §3's must-not-grant list, as **roles**. Held through another role counts,
-#: which is what the traversal is for.
-FORBIDDEN_ROLES = ("DBA", "PDB_DBA", "CDB_DBA")
+#: which is what the traversal is for. ``AUDIT_VIEWER`` and ``AUDIT_ADMIN`` both
+#: read every account's audit records, and ``AUDIT_ADMIN`` can also disable the
+#: policies a reset's ``audited`` check reports on. The check needs only
+#: ``READ`` on two policy views (§2).
+FORBIDDEN_ROLES = ("DBA", "PDB_DBA", "CDB_DBA", "AUDIT_VIEWER", "AUDIT_ADMIN")
 
 #: On §3's list and not visible from any read here, on any estate. Reported as
 #: unaudited rather than dropped, because a list missing one of its rows reads as

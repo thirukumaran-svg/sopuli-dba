@@ -1064,13 +1064,55 @@ the register.
   The reset record does not count as an audit trail, because the DBA's own run
   writes it. The guarantee ends where Vault has no audit device, or where the
   token output was redirected. Whether a reset checks the database's audit
-  settings is H10, which is still open.
+  settings is [H10](#h10).
 - **Rejected:**
   - `vault_path` as the default method: it needs human-identity auth and a Vault
     policy that sopuli does not create, so the default would not work on a stock
     Vault, and estates would fall back to the seen path.
   - A `notify:` channel declared trusted: the trust level would be an assertion
     in the configuration, not something the tool can check.
+
+## H10
+
+- **Decided:** 2026-10-15, #591
+- **Question:** UC-2 §1's attribution guarantee holds only where the database
+  audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or
+  record what it found?
+- **Decision:** An unseen reset records what it found, as
+  `audited: true | false | unknown`, in the reset record and in the run
+  document's result. It does not warn and does not refuse. The check reads the
+  enabled unified audit policies. `true` means that enabled policies cover
+  `LOGON` for the person and `ALTER USER` for every user. `false` means the
+  database is in pure unified mode, and for one of the two, no enabled policy
+  covers it or might cover it. Everything else is `unknown`, with the reason. The check needs an optional
+  grant, `READ` on two audit views. The Vault half of the condition stays
+  stated, not checked.
+- **Why:** Without a record, an estate with no audit policy runs unseen resets
+  and believes it has a guarantee it does not have, and nothing says which
+  guarantee each reset had. `ALTER USER` must be covered for every user because
+  a `BY` or `EXCEPT` list applies to the account that issues the statement.
+  The DBA issues the `ALTER USER`, and the tool cannot know which DBA.
+  `sql/oracle/13_audit_coverage_probe.sql` measured this on 26ai 23.26.2.0.0: a
+  policy enabled `BY` the person records the proxy logon and not the DBA's
+  `ALTER USER`. A reading the tool cannot finish never gives `false`, because a
+  wrong `false` and a wrong `true` both mislead. A warning or a refusal can be
+  added on top of the record later, without changing what is recorded. The
+  check is a moment in time: an account holding `AUDIT SYSTEM` can disable a
+  policy after it, and that case is not measured. For the Vault half, a reset
+  token would need `sudo` on `sys/audit` to see whether an audit device exists,
+  and no reset token should hold that.
+- **Rejected:**
+  - Stated only, with no check: nothing in the output says which guarantee a
+    reset had.
+  - A warning on every reset: in an estate with no audit policy it repeats on
+    every run, and people stop reading it.
+  - A refusal: it blocks the default path on every database without an audit
+    policy, and a config switch to waive it would need an answer under the
+    ratchet (invariant 10).
+  - "The policy applies to the person" for both actions: a policy enabled `BY`
+    the person would give `true` and record nothing of the DBA's `ALTER USER`.
+  - "The policy applies to the run's service account" for `ALTER USER`: it
+    shows that the reset itself is audited, not that a DBA's own account is.
 
 ## #10
 

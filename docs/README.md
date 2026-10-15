@@ -225,7 +225,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | H7 | UC-2 | A reset never converges | decided | outside invariant 9 by scope | #454 |
 | H8 | UC-2 | The stored copy on the unseen path | decided | split by method | #459 |
 | H9 | UC-2 | What "unseen" guarantees on `vault_wrapped` | decided | attribution, not access | #496 |
-| H10 | UC-2 | Does a reset check that the database audits it? | open | | #591 |
+| H10 | UC-2 | Does a reset check that the database audits it? | decided | it records `audited` as `true`, `false` or `unknown`; no warning, no refusal | #591 |
 | ADR-001 | ADR | Oracle privilege model | decided | direct `ALTER USER`, no definer-rights package | |
 | ADR-002 | ADR | CLI framework | decided | click | |
 | ADR-003 | ADR | Text tables | decided | click only, formatted by hand | #15 |

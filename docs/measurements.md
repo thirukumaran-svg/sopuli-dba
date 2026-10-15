@@ -96,6 +96,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `12_connection_encryption_probe.sql` | `19.3.0.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. As on 21.3 |
 | `12_connection_encryption_probe.sql` | `12.2.0.1.0` | 2026-10-09 | #697 | Plain, NNE and TLS. As on 21.3 |
 | `12_connection_encryption_probe.sql` | `11.2.0.2.0` | 2026-10-09 | #697 | Plain and NNE. The adapter row reads `Oracle Advanced Security: AES256 encryption service adapter`; the view shows the account three SIDs. TLS did not run: `ORA-29106` on the wallet |
+| `13_audit_coverage_probe.sql` | `23.26.2.0.0` | 2026-10-15 | #591 | Pure unified mode. A `BY` or `EXCEPT` list applies to the account that issues the statement, so a policy `BY` the person misses the DBA's `ALTER USER`. The account reads the policy views after `SYS` grants `READ`; `SYSTEM` cannot grant it. A common policy enabled in the root records nothing of local accounts' route, and records a common account's logon |
 | `99_uninstall.sql` | `23.26.2.0.0` | 2026-08-26 | — | `COMMON` and PDB installs, both `keep_audit` settings |
 | `99_uninstall.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | Both `keep_audit` settings |
 | `99_uninstall.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | As on 21.3 |

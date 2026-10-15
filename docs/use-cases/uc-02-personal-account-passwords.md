@@ -66,11 +66,30 @@ unseen path still protects is the password's value *elsewhere*: on the person's
 other targets, and wherever they reused it. A proxy grant is per database, and a
 password is not.
 
-**The condition is stated, not checked.** The tool creates no audit policy and
-reads none. Whether a reset should check that one is enabled, and warn, refuse
-or record what it found, is H10 (open: #591). Not measured: whether a DBA who also
-holds `AUDIT SYSTEM` can disable the policy first, and any release other than
-26ai.
+**An unseen reset records whether the database audits the DBA's routes**, as
+`audited` in the reset record and in the run document's result (decided
+in H10). It does not warn and it does not refuse. The tool creates no audit
+policy. This is not built yet (open: #591). There are three values:
+
+- `true`: enabled audit policies record the person's logons, and every user's
+  `ALTER USER`.
+- `false`: the database uses unified auditing only, and for one of the two, no
+  enabled policy records it or might record it.
+- `unknown`: the tool could not tell. The result says why. For example, the
+  service account cannot read the audit policies, traditional auditing might
+  also be in use, or a policy might record the action but has a condition the
+  tool does not evaluate. The tool never gives `false` for a fact it could not
+  read.
+
+`ALTER USER` must be recorded for every user, not only for the person, because
+the DBA issues it. A policy enabled for a list of users records the statements
+those users issue. So a policy enabled for the person records the proxy logon
+and not the DBA's `ALTER USER`. `02-oracle-privileges.md` §5 says how each kind
+of policy is read, and §2 has the optional grant the check needs.
+
+The value describes the moment of the check. Not measured: whether a DBA who
+also holds `AUDIT SYSTEM` can disable a policy first, and the audit behaviour of
+any release other than 26ai.
 
 **The name is left in any durable record the DBA does not control** (decided on
 #459 and #496): the database's audit trail or Vault's audit device, not the
@@ -112,11 +131,11 @@ tier-1 Vault (2.0.4), with a file device enabled for the run and removed after:
   DBA's token cannot read the path (§6.6). A guarantee that records a read is
   weaker than one that prevents it.
 
-The Vault half is stated, not checked, like the database half, and it is part of
-H10 (open: #591). Two facts from the same run matter there. A token scoped to the
-DBA's job gets `403` on `sys/audit`, so it cannot even see whether a device
-exists. And a token that can write `sys/audit` can disable the device; the probe
-did, to clean up. That is the Vault form of the `AUDIT SYSTEM` question above.
+The Vault half is stated, not checked (H10). A token scoped to the DBA's job gets
+`403` on `sys/audit`, so it cannot even see whether a device exists, and no reset
+token should hold the `sudo` capability that would let it. A token that can
+write `sys/audit` can also disable the device; the probe did, to clean up. That
+is the Vault form of the `AUDIT SYSTEM` question above.
 
 **The seen path is the traditional one, and it is not the default.** The DBA
 generates the password, sees it, and sends it on. **That is a deliberate,
@@ -1465,7 +1484,7 @@ absent (`04-testing.md`). They never branch on a version.
 | ~~H7~~ | ~~A reset never converges: a second invariant-9 exemption, or a convergent verb?~~ | **closed** — reports `changed: true` every run; invariant 9 is restated as a scope rule (§4.5). Reasons: [H7](../decisions/log.md#h7) · #454 |
 | ~~H8~~ | ~~On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it?~~ | **closed** — split by method: `vault_wrapped` keeps nothing, `vault_path` refuses a DBA token that can read (§6.6). Reasons: [H8](../decisions/log.md#h8) · #459 |
 | ~~H9~~ | ~~On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead?~~ | **closed** — attribution, not access; no second channel (§1, §6.8). Reasons: [H9](../decisions/log.md#h9) · #496 |
-| H10 | §1's attribution guarantee holds only where the database audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or record what it found? | #591, raised by §1 |
+| ~~H10~~ | ~~§1's attribution guarantee holds only where the database audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or record what it found?~~ | **closed** — an unseen reset records `audited` as `true`, `false` or `unknown`, and does not warn or refuse (§1). Reasons: [H10](../decisions/log.md#h10) · #591 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6.5): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2's fourth exception · #439 |
 | ~~—~~ | ~~When the reset journal's store and the delivery store are different vaults, and the journal's is down, does the run refuse or deliver without a lock and a record (§3.3)?~~ | **closed** — it refuses before any DDL; to reset during a journal outage, remove `reset_records:` and `SOPULI-W024` says so (§3.3). Reasons: [#516](../decisions/log.md#516) · #516 |
 | — | Should the seen reset's rollover refusal narrow to accounts whose old password still authenticates (§4.3)? | #541 |

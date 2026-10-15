@@ -587,6 +587,41 @@ in the view, since every connection measured has at least one. Nothing branches
 on this answer, so it never stops a run, unlike a failed capability probe. A connection over any transport other than TCP or
 TCPS is also `unknown`, because none has been measured.
 
+### Whether a reset is audited, and the optional grant on the audit policy views
+
+An unseen reset records whether the database audits the DBA's routes to acting
+as the person (UC-2 §1). To answer, the service account reads two views:
+`AUDIT_UNIFIED_ENABLED_POLICIES` and `AUDIT_UNIFIED_POLICIES`. §5 says how it
+reads them. The grant is optional, not part of the default install: decided in
+H10 (#591).
+
+This grants `READ` on the two views. Connect as `SYS` to run it: `SYSTEM` gets
+`ORA-01031`.
+
+```sql
+GRANT READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
+GRANT READ ON SYS.AUDIT_UNIFIED_POLICIES TO sopuli_svc;           -- or c##sopuli_svc CONTAINER=ALL
+```
+
+For a common service account, run the grants as `SYS` in `CDB$ROOT` with
+`CONTAINER=ALL`. The probe measured that a common account granted this way reads
+both views in a PDB.
+
+**Do not grant the `AUDIT_VIEWER` role instead.** It holds the same two grants,
+and much more: on 26ai 23.26.2.0.0 it holds 34 object grants, including `READ` on
+`UNIFIED_AUDIT_TRAIL`. A service account with the role can read every account's
+audit records. Whoever steals its credential can then see what the audit trail
+holds about the DBAs, which is the evidence UC-2 §1's guarantee rests on. §3
+lists the role.
+
+Without the grants, a service account with the base grants gets
+`ORA-00942: table or view "SYS"."AUDIT_UNIFIED_ENABLED_POLICIES" does not
+exist`, and the reset records `audited: unknown` with the grant named as the
+reason. It never records `false` for policies it could not read. The audit mode
+comes from `V$OPTION`, which `PUBLIC` can read. These results are from
+`sql/oracle/13_audit_coverage_probe.sql` on 26ai 23.26.2.0.0
+([measurements](../measurements.md)).
+
 ---
 
 ## 3. What must not be granted
@@ -599,6 +634,7 @@ TCPS is also `unknown`, because none has been measured.
 | `ALTER PROFILE` | no credential-sync verb edits a profile (UC-1 Q4). A profile is shared, so editing one reaches accounts nobody selected, and the config's account whitelist (invariant 5) cannot limit that. The tool reports the DDL that enables password rollover instead, and `doctor --check-privileges` reports this privilege if the service account holds it. Whether UC-4 may create and alter profiles is its own question; it would be a privilege of a principal UC-4 defines, not of this grant set |
 | `CREATE USER` / `DROP USER` | creating and dropping accounts is outside UC-1 |
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
+| `AUDIT_VIEWER`, `AUDIT_ADMIN` | both read every account's audit records, including what the trail holds about the DBAs. `AUDIT_ADMIN` can also disable the audit policies that a reset's `audited` value reports on. The check needs only `READ` on two policy views (§2) |
 | `EXECUTE ON DBMS_LOCK` | `00-principles.md` P5's advisory lock is in the vault, not the database (UC-1 Q2). A session-scoped database lock does not solve the problem: a stalled run's session is still alive, so its lock blocks others while its plan goes stale. A fencing token, checked again before every change, does solve it, and it needs nothing from the database |
 
 **The service account needs no grant to detect an application container.** `V$PDBS` is
@@ -1080,6 +1116,125 @@ the test container.
 Also audit failed logons by the service account. That is what credential
 probing looks like.
 
+### What a reset's `audited` value reads
+
+An unseen reset records `audited: true | false | unknown` (UC-2 §1). The value
+says whether enabled unified audit policies record the two routes by which a DBA
+can act as the person: an `ALTER USER`, and a logon as the person. The check
+reads the policies once per target, before the password is drawn. This is not
+built yet (open: #591).
+
+**A list of users applies to the account that issues the statement.**
+`sql/oracle/13_audit_coverage_probe.sql` measured this on 26ai 23.26.2.0.0. One
+`ACTIONS ALTER USER, LOGON` policy was enabled in four ways, and then a DBA
+granted itself `CONNECT THROUGH`, logged on as the person, and revoked the grant:
+
+| The policy is enabled | The DBA's `ALTER USER` | The proxy logon as the person |
+|---|---|---|
+| `BY` the person | not recorded | recorded |
+| `BY` the DBA | recorded | not recorded |
+| `EXCEPT` the person | recorded | not recorded |
+| `EXCEPT` the DBA | not recorded | recorded |
+
+So the two actions are checked against different accounts:
+
+- **`LOGON`** must be covered for the person: by a policy enabled for every user,
+  `BY` a list that names the person, or `EXCEPT` a list that does not name them.
+- **`ALTER USER`** must be covered for every user: by a policy enabled with no
+  `BY` and no `EXCEPT` list. The tool cannot know which DBA might use the route,
+  so a list never proves it.
+
+The check sorts each enabled policy, for each of the two actions, into one of
+three groups: it **covers** the action, it **might cover** it, or it **does not
+cover** it. Then:
+
+- `true`: a policy covers `LOGON`, and a policy covers `ALTER USER`. One policy
+  that covers an action settles it, whatever the other policies say.
+- `unknown`: an action that no policy covers has a policy that might cover it.
+  The result names that policy and why.
+- `false`: no policy covers or might cover one of the actions, and the database
+  uses unified auditing only (see below).
+
+A policy **covers** an action when all of these hold:
+
+- `AUDIT_UNIFIED_POLICIES` has a row for the action. That is `AUDIT_OPTION` set
+  to the action (`ALTER USER` or `LOGON`) with `AUDIT_OPTION_TYPE`
+  `STANDARD ACTION`, or `ALL` with type `STANDARD ACTION`, or, for
+  `ALTER USER` only, `ALTER USER` with type `SYSTEM PRIVILEGE`. The probe
+  measured that `ACTIONS ALL` records both actions, and that
+  `PRIVILEGES ALTER USER` records the DBA's `ALTER USER`, with any password
+  masked;
+- its `AUDIT_CONDITION` is `NONE`;
+- it records successful statements. `AUDIT_UNIFIED_ENABLED_POLICIES` has
+  `SUCCESS` and `FAILURE` columns. A policy with `SUCCESS = 'NO'` records only
+  failures and does not count. One that records only successes counts, because
+  the routes succeed;
+- it is enabled for the right accounts, as the two rules above say. A policy
+  enabled for a list of users has one row per user, and the check reads all of
+  a policy's rows together. `EXCEPT ac_dba, ac_person` is one list, and it names
+  the person.
+
+`AUDIT_UNIFIED_ENABLED_POLICIES` has one row for each way a policy is enabled:
+
+| Enabled as | `ENABLED_OPTION` | `ENTITY_NAME` |
+|---|---|---|
+| for every user | `BY USER` | `ALL USERS` |
+| `BY` a user | `BY USER` | the user |
+| `EXCEPT` a user | `EXCEPT USER` | the user |
+| `BY USERS WITH GRANTED ROLES` | `BY GRANTED ROLE` | the role |
+
+A policy **might cover** an action in these cases. The tool cannot decide them,
+so it does not guess:
+
+- **It has a row for the action, and a condition.** The tool does not evaluate
+  the condition, so it cannot know whether the condition holds for the DBA's
+  session.
+- **It has a row for the action, and is enabled for a role.** The tool does not
+  check which accounts hold the role.
+- **It has a row for `ALTER USER`, and is enabled through a `BY` or `EXCEPT`
+  list.** Some users are covered, and the tool cannot tell whether the DBA is
+  one of them.
+- **It is a common policy**, with `COMMON = 'YES'` in `AUDIT_UNIFIED_POLICIES`.
+  From the PDB, a common policy enabled in `CDB$ROOT` looks like a policy
+  enabled for every user. The probe measured that such a policy recorded
+  nothing of the route by local accounts: no `ALTER USER` and no logon, in any
+  container's trail. It did record a common account's logon to the PDB. So a
+  common DBA account taking the route might be recorded, and a local one is
+  not.
+- **It has a row of a kind the probe has not measured.** That is any
+  `SYSTEM PRIVILEGE` row other than `ALTER USER`, any `ROLE PRIVILEGE` row, and
+  any type other than `STANDARD ACTION`, `SYSTEM PRIVILEGE`, `OBJECT ACTION` and
+  `XS ACTION`. For example, `PRIVILEGES CREATE SESSION` may record logons, and
+  `ROLES DBA` may record an `ALTER USER` made through the role. Nobody has
+  measured either.
+
+A policy **does not cover** an action in every other case. These are the
+common ones:
+
+- it has no row for the action of any kind above. Its rows are other standard
+  actions, object actions, or `XS ACTION` rows. An
+  `ACTIONS ALTER USER` policy also has an `XS ACTION` row, `UPDATE USER`, which
+  changes nothing;
+- it records only failures (`SUCCESS = 'NO'`);
+- for `LOGON`, it is enabled `BY` a list that does not name the person, or
+  `EXCEPT` a list that names them. The table above measured both: neither
+  records the person's logon.
+
+`false` also needs the database to use unified auditing only: `V$OPTION` reports
+`Unified Auditing` as `TRUE`. 26ai Free 23.26.2.0.0 does. In mixed mode (`FALSE`
+on 12.1 and later), traditional auditing might record the action, so the value
+is `unknown`. 11.2 has no unified auditing, so the value is `unknown` there too.
+Neither case has been measured. [measurements](../measurements.md) lists the
+releases the probe has run on.
+
+On a PDB install, the two policies that `01_audit_policy.sql` creates give
+`false`. `sopuli_pol` covers `ALTER USER` for every user. `sopuli_logon_pol`
+does not cover `LOGON`: it records only failed logons, and only the service
+account's. An estate that wants `true` also enables a policy with
+`ACTIONS LOGON` for its personal accounts. On a `COMMON` install the script runs
+in `CDB$ROOT`, and the value a PDB's reset gets from those policies is not
+measured.
+
 ---
 
 ## 6. When the package would be worth reconsidering
@@ -1123,6 +1278,7 @@ the design as it is then.
 | `sql/oracle/10_awr_snapshot_probe.sql` | takes an AWR snapshot after `02_password_leak_probe.sql` and searches it (§4) |
 | `sql/oracle/11_proxy_connect_probe.sql` | whether `ALTER USER` alone can grant `CONNECT THROUGH` and connect as another account, and what that leaves in the audit trail |
 | `sql/oracle/12_connection_encryption_probe.sql` | what a session can read about whether its own connection is encrypted, with and without a grant (§2) |
+| `sql/oracle/13_audit_coverage_probe.sql` | what a service account can read about the enabled audit policies, and what each way of enabling a policy records of the proxy route (§2, §5) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 
