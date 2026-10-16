@@ -134,6 +134,7 @@ from sopuli.diagnostics import (
     no_reset_journal,
     no_reset_record,
     notification_unsent,
+    promotion_failed,
     promotion_withheld,
     reset_record_unwritten,
     rollback_reuse,
@@ -301,7 +302,7 @@ from sopuli.safety import (
 )
 from sopuli.secrets import Secret
 from sopuli.status import Row
-from sopuli.store import SecretStore, StoreError, connect
+from sopuli.store import CasConflictError, SecretStore, StoreError, connect
 from sopuli.store.credentials import StoredSecret, read_secret, resolve
 from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.survey import VaultReport
@@ -6255,6 +6256,24 @@ def creds_apply(
         ]
     )
     document.diagnostics.extend(reuse_notices)
+    # The invocation that repairs this run, for SOPULI-W033 and the repair line
+    # below, so the two name one command.
+    #
+    # One exception to "narrowed the way this run was narrowed": a promotion
+    # withheld because the run was too narrow (decision #406) is finished only by a
+    # wider one, so echoing the selectors back would name the invocation that
+    # withholds it again.
+    rerun = repair_invocation(
+        selectors=() if left_out else selectors,
+        config_paths=[str(path) for path in run.config_paths],
+        profile=run.profile,
+        source=source_stage,
+        strategy=strategy,
+    )
+    failed_promotions = _failed_promotions(
+        applied, promotions, rerun=rerun if stolen is None else None
+    )
+    document.diagnostics.extend(failed_promotions)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
     # re-password changed, and a summary counting only the DDL would call a run that
@@ -6282,7 +6301,10 @@ def creds_apply(
             promoted=all(one.version is not None for one in promotions.values() if one.promotable),
             promotable=any(one.promotable for one in promotions.values()),
         )
-    document.finish(code, summarise_apply(states, changed=changed))
+    document.finish(
+        code,
+        summarise_apply(states, changed=changed, unpromoted=_unpromoted(applied, promotions)),
+    )
     rows = [(record.binding, record.outcome, record.mutated) for record in applied]
     promoted = sum(1 for one in promotions.values() if one.version is not None)
     # Exit 4's whole purpose is to point at a remedy (P5, UC-1 §5), so the run that
@@ -6296,22 +6318,7 @@ def creds_apply(
     # remedy line says "run this again", which is the one thing not to do while
     # somebody else holds this estate's lock. `stopped` says what happened instead,
     # and `render_apply` refuses to print both.
-    #
-    # One exception to "narrowed the way this run was narrowed": a promotion
-    # withheld because the run was too narrow (decision #406) is finished only by a
-    # wider one, so echoing the selectors back would name the invocation that
-    # withholds it again.
-    repair = (
-        repair_invocation(
-            selectors=() if left_out else selectors,
-            config_paths=[str(path) for path in run.config_paths],
-            profile=run.profile,
-            source=source_stage,
-            strategy=strategy,
-        )
-        if code == ExitCode.PARTIAL and stolen is None
-        else None
-    )
+    repair = rerun if code == ExitCode.PARTIAL and stolen is None else None
     table = render_apply(
         rows,
         promoted=promoted,
@@ -6326,6 +6333,7 @@ def creds_apply(
     # ran this by hand.
     notes = render_notices(
         repair_notes
+        + [one.message for one in failed_promotions]
         + [one.message for one in reuse_notices]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
@@ -6419,6 +6427,9 @@ class _Promotion:
     promotion this run owed and did not make. Only the ones that owed a write are
     asked about -- a ``pending`` promoted forward, or a ``previous`` rolled back
     (`apply.PROMOTES`).
+
+    ``error`` is set where the write was made and failed, and ``conflict`` says
+    whether the store refused its compare-and-set (UC-1 §8 row 7).
     """
 
     version: int | None
@@ -6426,6 +6437,7 @@ class _Promotion:
     promotable: bool = False
     mechanism: str | None = None
     error: Error | None = None
+    conflict: bool = False
 
 
 def _confirm_rollback(
@@ -8477,6 +8489,75 @@ def _withheld(left_out: Mapping[LockKey, Sequence[Binding]]) -> list[Diagnostic]
     ]
 
 
+def _failed_promotion(
+    record: _Applied, promotions: Mapping[LockKey, _Promotion]
+) -> tuple[_Promotion, Error] | None:
+    """The failed promotion write this record's password was part of, and its error.
+
+    The one definition of a row the failure is about (#805). A row is part of
+    the write when it confirmed and its stage owed one (`apply.promotes`). A
+    sibling applied from `current` owed nothing, so its `current` is right, and a
+    skipped row was left out of the write (:func:`_by_document`).
+    """
+    binding, source = record.binding, record.source
+    if binding.secret is None or binding.vault is None or source is None:
+        return None
+    if not apply_states.promotes(source.stage):
+        return None
+    if not apply_states.is_confirmed(record.outcome.state):
+        return None
+    promotion = promotions.get(_lock_key(binding))
+    if promotion is None or promotion.error is None:
+        return None
+    return promotion, promotion.error
+
+
+def _failed_promotions(
+    applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion], *, rerun: str | None
+) -> list[Diagnostic]:
+    """``SOPULI-W033`` for each document whose promotion write failed (#805).
+
+    Every row in such a document is confirmed, so without this the run exits 4
+    and nothing in the document says why. The accounts named are the ones the
+    write was for, from :func:`_failed_promotion`. ``rerun`` is the command's
+    repair invocation, or ``None`` after a takeover (:func:`promotion_failed`).
+    """
+    failures: dict[LockKey, tuple[_Promotion, Error]] = {}
+    accounts: dict[LockKey, set[str]] = {}
+    rollbacks: set[LockKey] = set()
+    for record in applied:
+        found = _failed_promotion(record, promotions)
+        if found is None:
+            continue
+        key = _lock_key(record.binding)
+        failures[key] = found
+        accounts.setdefault(key, set()).add(record.binding.account)
+        if record.source is not None and record.source.stage == PREVIOUS:
+            rollbacks.add(key)
+    diagnostics = []
+    for key, (promotion, error) in failures.items():
+        diagnostics.append(
+            promotion_failed(
+                str(key),
+                sorted(accounts[key]),
+                error.message,
+                conflict=promotion.conflict,
+                rollback=key in rollbacks,
+                rerun=rerun,
+            )
+        )
+    return diagnostics
+
+
+def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
+    """The rows whose promotion write failed, from :func:`_failed_promotion`.
+
+    The summary counts them as failed, not ok: the database took the password
+    and applications still fetch the old one from `current`.
+    """
+    return sum(1 for record in applied if _failed_promotion(record, promotions) is not None)
+
+
 def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> None:
     """``vault.promote`` for one document whose compare-and-set was attempted.
 
@@ -8562,7 +8643,13 @@ def _write_promotion(
         written = write_credential(store, key.path, patch, cas=_version_of(stored))
     except Exception as error:  # noqa: BLE001 -- a per-document finding
         reported = _finding(error)
-        return _Promotion(None, reported.message, promotable=True, error=reported)
+        return _Promotion(
+            None,
+            reported.message,
+            promotable=True,
+            error=reported,
+            conflict=isinstance(error, CasConflictError),
+        )
     return _Promotion(
         written.version,
         f"promoted to v{written.version}",
@@ -8652,9 +8739,8 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
     binding = record.binding
     promotion = None
     if binding.secret is not None and binding.vault is not None:
-        promotion = promotions.get(
-            LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
-        )
+        promotion = promotions.get(_lock_key(binding))
+    failed = _failed_promotion(record, promotions)
     return build_apply_result(
         binding,
         record.outcome,
@@ -8664,6 +8750,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         verified_before=record.verified_before,
         rollover=record.rollover,
         promoted_to=None if promotion is None else promotion.version,
+        promotion_error=None if failed is None else failed[1],
         mechanism=None if promotion is None else promotion.mechanism,
         overridden=record.overridden,
         attributes=record.attributes,
@@ -9293,6 +9380,20 @@ def creds_rotate(
     document.diagnostics.extend(unchecked)
     clear = _encryption_notices(sequence.applied)
     document.diagnostics.extend(clear)
+    # The invocation that repairs this run, for SOPULI-W033 and the repair line
+    # below, so the two name one command.
+    rerun = repair_invocation(
+        selectors=selectors,
+        config_paths=[str(path) for path in run.config_paths],
+        profile=run.profile,
+        strategy=strategy,
+    )
+    failed_promotions = _failed_promotions(
+        sequence.applied,
+        sequence.promotions,
+        rerun=rerun if sequence.stolen is None else None,
+    )
+    document.diagnostics.extend(failed_promotions)
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
 
@@ -9322,19 +9423,21 @@ def creds_rotate(
             disagreed=len(sequence.disagreed),
         )
 
-    document.finish(code, summarise_apply(states, changed=changed))
+    document.finish(
+        code,
+        summarise_apply(
+            states,
+            changed=changed,
+            unpromoted=_unpromoted(sequence.applied, sequence.promotions),
+        ),
+    )
     # The repair invocation (decision #264), on the runs it is a remedy for.
     # Withheld after a takeover for the reason `render_apply` documents, and
     # withheld after a read-back disagreement for a different one: re-running
     # `apply` there would converge a database estate that is already converged, and
     # the thing to go and look at is the vault.
     repair = (
-        repair_invocation(
-            selectors=selectors,
-            config_paths=[str(path) for path in run.config_paths],
-            profile=run.profile,
-            strategy=strategy,
-        )
+        rerun
         if code == ExitCode.PARTIAL and sequence.stolen is None and _apply_owed(sequence, states)
         else None
     )
@@ -9352,6 +9455,7 @@ def creds_rotate(
     # surfaced.
     notes = render_notices(
         sequence.caveats
+        + [one.message for one in failed_promotions]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
         + _lock_notices(manager)

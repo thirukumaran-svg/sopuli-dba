@@ -1108,6 +1108,39 @@ def test_a_vault_lost_at_the_promotion_keeps_the_rows_and_is_exit_four(
     assert "SOPULI-W012" not in [one.get("code") for one in body.get("diagnostics", [])]
 
 
+def test_a_vault_lost_at_the_promotion_says_why_the_run_is_partial(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """§8 row 7 is reported on the row, in the summary and as `SOPULI-W033` (#805).
+
+    The store failed rather than refusing a compare-and-set, so the message
+    names no other writer. Nor does it say the vault refused the write: a write
+    that failed for any other reason may have landed.
+    """
+    estate(store=LostAtPromotion())
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    (row,) = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]
+    assert row["actions"][-1]["kind"] == "vault_promote"
+    assert row["actions"][-1]["applied"] is True
+    assert "connection refused" in row["error"]["message"]
+    assert body["summary"]["ok"] == 0
+    assert body["summary"]["failed"] == 1
+    (failed,) = [one for one in body["diagnostics"] if one.get("code") == "SOPULI-W033"]
+    expected = (
+        "apps/acme/appdb-alpha was not promoted: the write failed, so this run cannot say "
+        "whether the vault kept it"
+    )
+    assert expected in failed["message"]
+    assert "`current` may still hold" in failed["message"]
+    assert "another writer" not in failed["message"]
+
+
 def test_a_vault_lost_at_the_promotion_names_the_repair(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

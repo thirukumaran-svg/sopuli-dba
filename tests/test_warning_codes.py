@@ -66,7 +66,7 @@ PREFIX = {"warning": "SOPULI-W", "error": "SOPULI-"}
 #: The highest number given so far in each series. A pull request that adds a
 #: code raises it here. A number is never reused, so deleting the highest row and
 #: its constant must fail, and without this the other checks would still pass.
-HIGHEST = {"warning": 32, "error": 20003}
+HIGHEST = {"warning": 33, "error": 20003}
 
 
 def _constants(pattern: re.Pattern[str]) -> dict[str, list[str]]:

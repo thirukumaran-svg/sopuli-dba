@@ -23,12 +23,22 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from fault_harness import ACCOUNT, SECRET, Estate, Fault, HarnessError, VaultGate
+from fault_harness import (
+    ACCOUNT,
+    SECRET,
+    TIMEOUT,
+    Estate,
+    Fault,
+    HarnessError,
+    VaultGate,
+    start_paused,
+)
 from sopuli.exit_codes import ExitCode
 
 #: ``rotate``'s writes to the secret's path, counted from 1.
@@ -181,6 +191,61 @@ def test_a_promotion_vault_kept_but_never_answered_is_not_success(
     new = document["DB_CREDENTIALS"][ACCOUNT]
     assert new != faulted.current, "Vault did not keep the promotion"
     assert fault_estate.login(new)
+
+
+def test_a_promotion_that_loses_its_compare_and_set_says_why(
+    fault_estate: Estate, vault_stack: Any
+) -> None:
+    """Step 7, refused because another writer changed the document (#805).
+
+    The gate pauses the promotion, the test writes to the secret as another
+    writer would, and the gate lets the promotion through. Vault refuses its
+    compare-and-set. The run says so on the row, in the summary and with
+    ``SOPULI-W033``, and ``creds apply`` then finishes the job.
+    """
+    config = fault_estate.config(vault_stack.addr)
+    first = fault_estate.sopuli(config, "creds", "rotate", "--confirm")
+    assert first.returncode == ExitCode.SUCCESS, first.stderr
+    gate = VaultGate(
+        vault_stack.addr,
+        f"/v1/{fault_estate.mount}/data/{SECRET}",
+        Fault.PAUSE_WRITE,
+        writes=PROMOTION,
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            run = start_paused(pool, fault_estate, gate, "creds", "rotate", "--confirm")
+            try:
+                staged, version = fault_estate.read(SECRET)
+                reply = fault_estate.vault.post(
+                    f"/v1/{fault_estate.mount}/data/{SECRET}",
+                    json={"options": {"cas": version}, "data": {**staged, "note": "another"}},
+                )
+                assert reply.status_code == 200, reply.text
+            finally:
+                gate.release()
+            result = run.result(timeout=TIMEOUT)
+    finally:
+        gate.close()
+
+    assert result.returncode == ExitCode.PARTIAL, result.stderr
+    document = json.loads(result.stdout)
+    (row,) = [one for one in document["results"] if one["state"] != "PENDING_APPLY"]
+    assert row["state"] == "IN_SYNC"
+    assert row["actions"][-1]["kind"] == "vault_promote"
+    assert row["actions"][-1]["applied"] is True
+    assert "error" in row
+    assert document["summary"]["ok"] == 0
+    assert document["summary"]["failed"] == 1
+    (failed,) = [one for one in document["diagnostics"] if one.get("code") == "SOPULI-W033"]
+    assert SECRET in failed["message"]
+    assert "another writer" in failed["message"]
+
+    applied = fault_estate.sopuli(config, "creds", "apply", "--confirm")
+
+    assert applied.returncode == ExitCode.SUCCESS, applied.stderr
+    promoted, _ = fault_estate.read(SECRET)
+    assert promoted["DB_CREDENTIALS"][ACCOUNT] == staged["pending"][ACCOUNT]
 
 
 def test_a_stale_read_after_promotion_is_exit_four_with_its_own_code(

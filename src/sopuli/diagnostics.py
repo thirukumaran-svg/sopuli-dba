@@ -445,6 +445,13 @@ CONNECTION_UNENCRYPTED = "SOPULI-W031"
 #: without parsing a message. One per target.
 CONNECTION_ENCRYPTION_UNKNOWN = "SOPULI-W032"
 
+#: Every target confirmed and the promotion write failed (UC-1 §8 row 7, #805).
+#: The run exits 4, and without this nothing else in the document says why: every
+#: row is confirmed. Its own code for `SOPULI-W011`'s reason. A failed target is
+#: repaired by the same run again, and so is this, but the reader looks first at
+#: the vault, because a refused compare-and-set means another writer.
+PROMOTION_FAILED = "SOPULI-W033"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -687,6 +694,20 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "entry per target, with the reason: for Oracle, usually that "
             "`V$SESSION_CONNECT_INFO` is not readable, and the message names the grant. "
             "It is not the same finding as `SOPULI-W031`."
+        ),
+        PROMOTION_FAILED: (
+            "Every target of a secret document confirmed a password, and the write that "
+            "promotes it to `current` failed. The databases have that password and "
+            "`current` may still hold the one before it, which is UC-1 §8's most severe case. "
+            "Only a refused compare-and-set says it does; a write that failed any other way "
+            "may have landed. One "
+            "entry per document, naming its path, its accounts and the store's message. A "
+            "refused compare-and-set means another writer changed the document after this "
+            "run read it, so the stage this run applied may have changed too. The remedy is "
+            "the same run again, narrowed the same way: `creds apply` applies `pending` to "
+            "every target and promotes it, and a failed rollback is repeated with "
+            "`--source previous --confirm`. Where the run then lost its lock, the message "
+            "names no re-run: the run holding the lock finishes it."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1181,6 +1202,64 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
             "which this run's selection left out -- run `creds apply` without the narrowing "
             "to finish"
+        ),
+    )
+
+
+def promotion_failed(
+    document: str,
+    accounts: Sequence[str],
+    reason: str,
+    *,
+    conflict: bool,
+    rollback: bool,
+    rerun: str | None,
+) -> Diagnostic:
+    """One document whose promotion write failed after every target confirmed.
+
+    ``conflict`` is whether the store refused the compare-and-set. That case
+    says another writer changed the document, and the stage this run applied
+    may no longer hold what it applied. So the message says to look at the
+    document before running `apply` again.
+
+    ``rollback`` is whether the write promoted `previous` (`--source previous`).
+    It changes which stage the message names.
+
+    ``rerun`` is the invocation that finishes the job, from
+    :func:`sopuli.output.apply_view.repair_invocation`, so it is narrowed and
+    resolved the way this run was, and a rollback is repeated as a rollback.
+    ``None`` where the run lost its lock afterwards (``SOPULI-W011``): running
+    again is then the one thing not to do, and the run holding the lock is the
+    one to finish it.
+
+    The store's message comes last, for :func:`reset_record_unwritten`'s reason.
+    """
+    stage = "previous" if rollback else "pending"
+    # Only a refused compare-and-set says what the vault holds. Any other failure,
+    # such as a timeout or a lost reply, may follow a write the vault committed.
+    if conflict:
+        cause = (
+            "another writer changed the document after this run read it, so the vault "
+            "refused the compare-and-set"
+        )
+        state = "still holds the password they had before"
+    else:
+        cause = "the write failed, so this run cannot say whether the vault kept it"
+        state = "may still hold the password they had before"
+    if rerun is None:
+        remedy = "another run then took over this run's lock, and that run is the one to finish it"
+    else:
+        check = f"find out who wrote to it and what `{stage}` now holds, then " if conflict else ""
+        remedy = (
+            f"{check}run `{rerun}`, which applies `{stage}` to every target again and promotes it"
+        )
+    return Diagnostic(
+        level="error",
+        code=PROMOTION_FAILED,
+        message=(
+            f"{document} was not promoted: {cause}. The databases have `{stage}` for "
+            f"{', '.join(accounts)} and `current` {state} -- {remedy}. "
+            f"The store said: {reason}"
         ),
     )
 

@@ -1096,8 +1096,11 @@ consumer needs no line: it has `results[]`, and `03-json-output.md` §7's recipe
 is the same filter the flag applies.
 
 **The line carries no diagnostic code.** `03-json-output.md` §3's rule is that a
-code exists for what the exit code cannot tell you. Here exit 4 says it, and
-`results[]` already carries the states a consumer would filter on.
+code exists for what the exit code cannot tell you. Here exit 4 says that the run
+is partial, and `results[]` carries the states a consumer would filter on. What
+exit 4 cannot say is why an estate that confirmed was not promoted. So a failed
+promotion write has its own code, `SOPULI-W033`, which names the same repair
+command, printed as a note under the line.
 
 ---
 
@@ -1926,7 +1929,7 @@ invariant 5: the write lands under the store's `locks/` prefix, in a store that
 | 4 | nothing changed in the database; `pending` may exist | `apply` where a `pending` was staged, which applies and promotes it; otherwise run `rotate` again. A staging write that passed its fence can land after a takeover. Its `pending` holds a password that nobody has, and the next `apply` applies and promotes it (*How the fence is checked*) |
 | 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair` with the run's document, then `apply` to promote (§5, *A repair of a rotation*); with the rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
-| 7 | database has new, vault `current` still old | **the most severe case**: `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
+| 7 | database has new, vault `current` still old | **the most severe case**: exit 4 with `SOPULI-W033`, which names the document, its accounts and the store's message, and each row carries the failed `vault_promote`. `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
 | 8 | promoted, and the read-back disagreed or failed | the databases are converged, and the run cannot confirm that the vault serves what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts, and the store's message for a document it could not read. Nothing needs undoing; the place to look is the vault, not any database: a replica behind its primary, or a store that stopped answering |
 | any fence check, at 4–7 | another run took this run's lock; what this run already applied stands | abort at once, change nothing more, exit **7** if nothing had been applied and **4** if something had, with `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it. A write that passed its fence check before the takeover still lands, so `pending` can hold this run's password |
 

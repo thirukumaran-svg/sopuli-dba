@@ -38,7 +38,12 @@ from sopuli.config.errors import ArgumentError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import LOCK_TAKEN_OVER, PROMOTION_WITHHELD, REPAIR_DOCUMENT_STALE
+from sopuli.diagnostics import (
+    LOCK_TAKEN_OVER,
+    PROMOTION_FAILED,
+    PROMOTION_WITHHELD,
+    REPAIR_DOCUMENT_STALE,
+)
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
 from sopuli.driver.protocol import (
@@ -1381,6 +1386,187 @@ def test_a_changed_database_with_no_promotion_carries_a_warning(
 
     warnings = document(result)["results"][0]["warnings"]
     assert any("was not promoted" in one["message"] for one in warnings)
+
+
+def outside_writer(store: Any, path: str) -> list[str]:
+    """Another writer changes ``path`` just before this run's promotion of it (#805).
+
+    The promotion is the run's only write to a secret path, so the first write
+    there is the one to race. The other writer's write uses the version the
+    promotion is about to send, so the promotion's compare-and-set is refused.
+    """
+    write = store.write
+    raced: list[str] = []
+
+    def racing_write(target: str, data: Mapping[str, Any], *, cas: int | None = None) -> int:
+        if not raced and target == path:
+            raced.append(target)
+            held = store.read(target)
+            assert held is not None
+            write(target, {**held.data, "note": "somebody else"}, cas=cas)
+        return int(write(target, data, cas=cas))
+
+    store.write = racing_write
+    return raced
+
+
+def test_a_promotion_that_loses_its_compare_and_set_says_so(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """UC-1 §8 row 7, reported where a reader looks (#805).
+
+    Every target confirmed, so the rows are `IN_SYNC`. Before the fix exit 4 was
+    the only sign: no `vault_promote` action, no error, `ok` in the summary and
+    no diagnostic. The other document promotes as usual.
+    """
+    harness = estate()
+    raced = outside_writer(harness["store"], "apps/acme/appdb-alpha")
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+    found = document(result)
+
+    assert raced, "the promotion never wrote, so this asserts nothing"
+    assert not list(validator.iter_errors(found))
+    assert found["exit_code"] == ExitCode.PARTIAL
+    alpha, beta = found["results"]
+    assert alpha["target"] == "appdb-alpha"
+    assert alpha["state"] == "IN_SYNC"
+    promote = alpha["actions"][-1]
+    assert promote["kind"] == "vault_promote"
+    assert promote["applied"] is True
+    assert "failed" in promote["detail"]
+    assert "compare-and-set" in alpha["error"]["message"]
+    assert any("SOPULI-W033" in one["message"] for one in alpha["warnings"])
+    assert beta["actions"][-1]["detail"].startswith("promoted `pending` to `current`")
+    assert "error" not in beta
+    assert found["summary"]["ok"] == 1
+    assert found["summary"]["failed"] == 1
+    assert found["summary"]["by_state"] == {"IN_SYNC": 2}
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert failed["level"] == "error"
+    assert "apps/acme/appdb-alpha" in failed["message"]
+    assert "acme_web_user" in failed["message"]
+    assert "another writer" in failed["message"]
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
+
+
+def test_a_failed_promotion_is_printed_with_its_remedy(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The text output says it too: a diagnostic only in JSON reaches nobody at a
+    terminal."""
+    harness = estate()
+    outside_writer(harness["store"], "apps/acme/appdb-alpha")
+
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "apps/acme/appdb-alpha was not promoted" in result.output
+    assert "repair with: sopuli creds apply" in result.output
+
+
+def test_a_failed_promotion_leaves_a_sibling_from_current_alone(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A sibling applied from `current` owed the write nothing, so its `current`
+    is right: it is ok, carries no error, and is not named in `SOPULI-W033`."""
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={
+            "ACME_WEB_USER": drifted(),
+            "ACME_BATCH_USER": [VerifyResult(VERIFY_LOGIN, PASS, latency_ms=9)],
+        },
+    )
+    outside_writer(harness["store"], "apps/acme/db")
+
+    found = document(run(runner, write_config(SHARED_CONFIG), "--output", "json"))
+
+    rows = {row["account"]: row for row in found["results"]}
+    assert "error" in rows["acme_web_user"]
+    assert "error" not in rows["acme_batch_user"]
+    assert "vault_promote" not in [one["kind"] for one in rows["acme_batch_user"]["actions"]]
+    assert (found["summary"]["ok"], found["summary"]["failed"]) == (1, 1)
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert "for acme_web_user and" in failed["message"]
+
+
+def test_a_failed_rollback_promotion_names_the_rollback_as_its_remedy(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A plain `creds apply` would apply `current` back and undo the rollback."""
+    harness = estate(documents=_rolled(), answers={"ACME_WEB_USER": drifted()})
+    outside_writer(harness["store"], "apps/acme/appdb-alpha")
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--confirm",
+        "--output",
+        "json",
+    )
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.PARTIAL
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert "The databases have `previous`" in failed["message"]
+    assert "--select tenant=alpha --source previous --confirm`" in failed["message"]
+
+
+def test_a_failed_promotion_names_the_runs_own_repair(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The remedy keeps `--config` and the selectors, as the repair line does: a
+    bare re-run would spend a login on every target of the estate."""
+    harness = estate()
+    outside_writer(harness["store"], "apps/acme/appdb-alpha")
+    config = write_config(CONFIG)
+
+    found = document(run(runner, config, "--select", "env=prod", "--output", "json"))
+
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert f"run `sopuli creds apply --config {config} --select env=prod`" in failed["message"]
+
+
+def test_a_failed_promotion_names_no_rerun_after_a_takeover(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Alpha's promotion fails, then the run finds beta's lock taken. Running
+    again is the one thing not to do (SOPULI-W011), so W033 does not say to."""
+    harness = estate()
+    store = harness["store"]
+    write = store.write
+    beta = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
+
+    def racing_write(path: str, data: Mapping[str, Any], *, cas: int | None = None) -> int:
+        if path == "apps/acme/appdb-alpha":
+            held = store.read(path)
+            write(path, {**held.data, "note": "somebody else"}, cas=cas)
+            record = store.read(lock_path(beta))
+            write(lock_path(beta), fresh(), cas=record.version)
+        return int(write(path, data, cas=cas))
+
+    store.write = racing_write
+
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    codes = [one.get("code") for one in found["diagnostics"]]
+    assert "SOPULI-W011" in codes
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert "run `sopuli creds apply" not in failed["message"]
+    assert "another run then took over this run's lock" in failed["message"]
 
 
 # ------------------------------------------------------------------ the fence ---
