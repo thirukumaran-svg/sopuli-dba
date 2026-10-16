@@ -764,10 +764,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "names no re-run: the run holding the lock finishes it."
         ),
         UNREAD_POLICY_KEYS: (
-            "A policy's `rotation:` or `verify:` block sets keys that no run reads. "
-            "They are parsed and validated, and every verb takes them from the command "
-            "line instead. One entry per block, naming the keys and the flag that sets "
-            "each one where there is a flag."
+            "Retired. Not emitted from 0.74.0, and no release emitted it: it was added "
+            "after 0.73.0, and removed with a policy's `rotation:` and `verify:` blocks (#787). "
+            "It said that a policy's `rotation:` or `verify:` block set keys that no run "
+            "read."
         ),
         DELIVERY_UNSERVICEABLE: (
             "`delivery.method` names a method this build does not implement, so nothing "

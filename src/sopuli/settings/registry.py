@@ -4,7 +4,7 @@ P3 defines one precedence chain and invariant 10 says safety settings only
 ratchet toward safe. Both rules are about *settings* rather than about command
 line options, and the distinction is the whole reason this module exists.
 
-`readonly` has no flag at all. A profile block can write `verify.method`.
+`readonly` has no flag at all. A profile block can write `db.connect_timeout_s`.
 `--dry-run` has a flag *and* an environment variable. A resolver
 keyed on click options would leave half the things needing a merge policy with
 nowhere to declare one. So the unit is a setting -- ``safety.dry_run``,
@@ -434,9 +434,9 @@ def _vault_setting(
 #:
 #: Deliberately only settings something reads, plus the safety block, which is
 #: the reason the ratchet exists at all. An entry for a setting nothing reads
-#: would be a contract stated in a place no test can mean anything about. So a
-#: profile may write ``verify.method``, and the config layer validates it, but it
-#: is not a setting here: ``creds check`` takes its method from ``--method``.
+#: would be a contract stated in a place no test can mean anything about. A
+#: config key with no reader is not kept for a reader to come later: a profile's
+#: ``verify:`` and ``rotation:`` were removed for that reason (#787).
 #:
 #: The ``vaults.*`` entries are here because a top-level ``vaults:`` declaration,
 #: a ``defaults.vaults:`` block and a profile's ``vaults:`` are layers of one

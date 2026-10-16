@@ -83,11 +83,8 @@ KEY_SETS: dict[str, tuple[str, ...]] = {
     "policy": policies.POLICY_KEYS,
     "password_policy": policies.PASSWORD_KEYS,
     "require": policies.REQUIRE_KEYS,
-    "rotation_policy": policies.ROTATION_KEYS,
-    "verify_policy": policies.VERIFY_KEYS,
     "account_policy": policies.ACCOUNT_KEYS,
     "profile": profiles.PROFILE_KEYS,
-    "profile_rotation": profiles.ROTATION_KEYS,
     "profile_db": profiles.DB_KEYS,
     "defaults": defaults.DEFAULTS_KEYS,
     "runtime": defaults.RUNTIME_KEYS,
@@ -115,9 +112,6 @@ ENUMS: dict[str, tuple[Any, ...]] = {
     "$defs/target_patch/properties/type": targets.TARGET_TYPES,
     "$defs/password_policy/properties/charset": policies.CHARSETS,
     "$defs/password_policy/properties/first_char": policies.FIRST_CHARS,
-    "$defs/rotation_policy/properties/strategy": policies.ROTATION_STRATEGIES,
-    "$defs/profile_rotation/properties/strategy": policies.ROTATION_STRATEGIES,
-    "$defs/verify_policy/properties/method": policies.VERIFY_METHODS,
     "$defs/profile/properties/output": profiles.OUTPUTS,
 }
 

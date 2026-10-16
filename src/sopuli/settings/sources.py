@@ -142,9 +142,7 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
     authority itself.
 
     Only the settings that have a consumer appear, which is the rule
-    :mod:`sopuli.settings.registry` states and this is the other end of it. §5's
-    list is longer -- ``verify.method`` among it -- and those keys are parsed
-    and validated, but they join here only when something reads them. A
+    :mod:`sopuli.settings.registry` states and this is the other end of it. A
     contribution for a setting nothing consults would be refused by
     :func:`sopuli.invocation._wired` anyway.
 

@@ -502,9 +502,10 @@ def test_a_profile_block_no_command_consults_still_loads(
     more ordinary thing the guard can break: a key the file is allowed to
     contain.
 
-    `verify.method` is the key that stands for "accepted and unread": parsed,
-    closed against `VERIFY_METHODS`, and read by nothing. It is written *beside*
-    the `db:` block, which is read, so one config covers both.
+    Every key a profile may write is read (#787), so the key here is one read
+    outside the resolver: a `vaults:` block, which `sopuli/config/vault_layers.py`
+    merges while the file is built. It is written *beside* the `db:` block, which
+    the resolver reads, so one config covers both.
     """
     # `write_config` rather than a hand-written file: it sets 0600, which P4's
     # permission check requires on POSIX. Writing it by hand passed on Windows
@@ -517,16 +518,17 @@ def test_a_profile_block_no_command_consults_still_loads(
         "    addr: https://vault.example.com:8200\n"
         "profiles:\n"
         "  ci:\n"
-        "    verify:\n"
-        "      method: hash\n"
+        "    vaults:\n"
+        "      vault-dev:\n"
+        "        timeout_s: 60\n"
         "    db:\n"
         "      connect_timeout_s: 90\n"
         "      query_timeout_s: 600\n"
     )
 
-    # The test is about an unread key, so it fails if `verify.method` gains a
-    # reader instead of passing without covering that case.
-    assert "verify.method" not in invocation.RESOLVED_SETTINGS
+    # The test is about a key the resolver does not consult, so it fails if the
+    # store's settings join it instead of passing without covering that case.
+    assert not any(name.startswith("vaults.") for name in invocation.RESOLVED_SETTINGS)
 
     result = runner.invoke(cli, ["--profile", "ci", "config", "validate", "--config", str(config)])
 
@@ -932,21 +934,24 @@ def test_explain_attributes_a_profile_supplied_value_to_layer_three(
     assert "output" in result.output
 
 
-def test_a_profile_key_with_no_consumer_reaches_no_setting(
+def test_a_profile_key_with_no_consumer_was_removed(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:
-    """§5's list is longer than the registry's, deliberately. `verify.method` is
-    parsed and validated and reaches nothing: `creds check` takes its method from
-    `--method`. A row in `invocation.options` for it would claim otherwise."""
+    """A profile's `verify:` reached no setting: `creds check` takes its method
+    from `--method`. It was removed rather than kept unread (#787), so a config
+    that still writes it is refused, and the refusal names the flag."""
     path = write_config("version: 1\nprofiles:\n  ci:\n    verify:\n      method: hash\n")
 
     result = runner.invoke(
         cli, ["config", "show", "--config", str(path), "--profile", "ci", "--output", "json"]
     )
 
-    assert result.exit_code == ExitCode.SUCCESS
-    assert document_of(result)["invocation"]["profile"] == "ci"
-    assert "verify.method" not in options(result)
+    # Exit 9 through `main`; the runner re-raises instead, so the code is
+    # asserted on the error itself.
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "`verify:` was removed from profiles" in str(result.exception)
+    assert "--method" in str(result.exception.hint)
 
 
 def test_the_run_document_still_validates_with_a_profile(runner: CliRunner, estate: Path) -> None:

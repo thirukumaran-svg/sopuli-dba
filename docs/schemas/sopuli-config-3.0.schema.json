@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-2.0.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-3.0.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
@@ -55,7 +55,7 @@
       "additionalProperties": {
         "$ref": "#/$defs/policy"
       },
-      "description": "Password and rotation rules (§8)."
+      "description": "Password and account rules (§8)."
     },
     "profiles": {
       "type": "object",
@@ -832,17 +832,11 @@
     },
     "policy": {
       "type": "object",
-      "description": "Password rules, rotation strategy and verification, under one name.",
+      "description": "Password rules and what the tool may do to the account, under one name.",
       "additionalProperties": false,
       "properties": {
         "password": {
           "$ref": "#/$defs/password_policy"
-        },
-        "rotation": {
-          "$ref": "#/$defs/rotation_policy"
-        },
-        "verify": {
-          "$ref": "#/$defs/verify_policy"
         },
         "account": {
           "$ref": "#/$defs/account_policy"
@@ -906,52 +900,6 @@
         }
       }
     },
-    "rotation_policy": {
-      "type": "object",
-      "description": "How a new password replaces the old one (UC-1 §6).",
-      "additionalProperties": false,
-      "properties": {
-        "strategy": {
-          "type": "string",
-          "enum": [
-            "rollover",
-            "staged",
-            "direct"
-          ]
-        },
-        "rollover_hours": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "keep_previous": {
-          "type": "boolean"
-        },
-        "max_age_days": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
-    },
-    "verify_policy": {
-      "type": "object",
-      "description": "How the tool confirms a password works. Shared with a profile, because the same estate is verified by login from a laptop and by hash comparison from a scheduler (§5).",
-      "additionalProperties": false,
-      "properties": {
-        "method": {
-          "type": "string",
-          "enum": [
-            "login",
-            "hash",
-            "both",
-            "none"
-          ]
-        },
-        "lockout_margin": {
-          "type": "integer",
-          "minimum": 0
-        }
-      }
-    },
     "account_policy": {
       "type": "object",
       "description": "What the tool may do to the account itself, beyond its password. Every attribute here is opt-in and off by default (§8).",
@@ -981,12 +929,6 @@
         "vaults": {
           "$ref": "#/$defs/vault_patches"
         },
-        "verify": {
-          "$ref": "#/$defs/verify_policy"
-        },
-        "rotation": {
-          "$ref": "#/$defs/profile_rotation"
-        },
         "safety": {
           "$ref": "#/$defs/safety"
         },
@@ -1006,21 +948,6 @@
         },
         "db": {
           "$ref": "#/$defs/profile_db"
-        }
-      }
-    },
-    "profile_rotation": {
-      "type": "object",
-      "description": "Only `strategy`. The rest of a rotation policy describes the credential's lifecycle, which is a property of the estate rather than of the machine running the command.",
-      "additionalProperties": false,
-      "properties": {
-        "strategy": {
-          "type": "string",
-          "enum": [
-            "rollover",
-            "staged",
-            "direct"
-          ]
         }
       }
     },

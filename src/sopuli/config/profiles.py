@@ -5,7 +5,7 @@ are pointing at; a profile describes where you are running from.** Everything
 this module does follows from it.
 
 The two lists matter more than the parsing. A profile may set the things that
-change *behaviour* -- whether it may prompt, how it verifies, what it prints --
+change *behaviour* -- whether it may prompt, how long it waits, what it prints --
 and may not set anything that changes *scope*. A selector-shaped option that is
 not a selector is a bad footgun in a tool that rotates credentials, so the
 scope-changing keys get their own message rather than a generic unknown-key one:
@@ -37,11 +37,12 @@ from sopuli.config.fields import (
     mapping,
     optional_bool,
     optional_int,
+    reject_removed_keys,
     reject_unknown_keys,
 )
 from sopuli.config.locking import build_locking
 from sopuli.config.model import Profile, ProfileDb
-from sopuli.config.policies import ROTATION_STRATEGIES, build_verify
+from sopuli.config.policies import REMOVED_VERIFY
 from sopuli.config.references import dangling
 from sopuli.config.safety import read_safety
 from sopuli.config.vaults import build_vault_patches, vault_name
@@ -51,8 +52,6 @@ from sopuli.config.vaults import build_vault_patches, vault_name
 PROFILE_KEYS = (
     "vault",
     "vaults",
-    "verify",
-    "rotation",
     "safety",
     "locking",
     "confirm",
@@ -80,9 +79,9 @@ FORBIDDEN_KEYS = {
 REMOVED_KEYS = {
     "log_level": "a config cannot turn on debug output; use --debug on the command line",
     "log_file": "the tool writes no log file; use --debug and redirect stderr",
+    "verify": REMOVED_VERIFY,
+    "rotation": "no run read it; --strategy sets the strategy on the command line",
 }
-
-ROTATION_KEYS = ("strategy",)
 
 DB_KEYS = ("connect_timeout_s", "query_timeout_s")
 
@@ -102,14 +101,12 @@ def build_profiles(document: dict[str, Any]) -> tuple[Profile, ...]:
 def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
     entry = mapping(raw, at=at)
     _reject_forbidden_keys(entry, at=at)
-    _reject_removed_keys(entry, at=at)
+    reject_removed_keys(entry, removed=REMOVED_KEYS, section="profiles", at=at)
     reject_unknown_keys(entry, allowed=PROFILE_KEYS, at=at)
 
     return Profile(
         name=name,
         vault=vault_name(entry, at=at),
-        verify=build_verify(entry.get("verify"), at=at.key("verify")),
-        rotation_strategy=_build_rotation_strategy(entry.get("rotation"), at=at.key("rotation")),
         safety=read_safety(entry, at=at),
         locking=build_locking(entry.get("locking"), at=at.key("locking")),
         confirm=optional_bool(entry, "confirm", at=at),
@@ -171,30 +168,6 @@ def _reject_forbidden_keys(entry: dict[str, Any], *, at: KeyPath) -> None:
                 at=at.key(key),
                 hint=f"{FORBIDDEN_KEYS[key]} (§5)",
             )
-
-
-def _reject_removed_keys(entry: dict[str, Any], *, at: KeyPath) -> None:
-    """Refuse a key an older build accepted, and say why it is gone."""
-    for key in sorted(entry):
-        if key in REMOVED_KEYS:
-            raise ConfigError(
-                f"`{key}:` was removed from profiles",
-                at=at.key(key),
-                hint=f"delete it; {REMOVED_KEYS[key]}",
-            )
-
-
-def _build_rotation_strategy(raw: Any, *, at: KeyPath) -> str | None:
-    """Only ``strategy`` -- §5 lists no other rotation key.
-
-    ``rollover_hours`` and friends describe the credential's lifecycle, which is
-    a property of the estate rather than of the machine running the command.
-    """
-    if raw is None:
-        return None
-    block = mapping(raw, at=at)
-    reject_unknown_keys(block, allowed=ROTATION_KEYS, at=at)
-    return _closed(block, "strategy", allowed=ROTATION_STRATEGIES, noun="strategy", at=at)
 
 
 def _build_db(raw: Any, *, at: KeyPath) -> ProfileDb:

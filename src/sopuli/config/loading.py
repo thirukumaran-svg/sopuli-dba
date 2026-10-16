@@ -29,13 +29,13 @@ the ordering is the only thing that makes the refusal mean anything.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import fields, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from sopuli.config.applications import build_applications
 from sopuli.config.bindings import build_bindings
-from sopuli.config.codes import DELIVERY_UNSERVICEABLE, NOTIFY_UNSERVICEABLE, UNREAD_POLICY_KEYS
+from sopuli.config.codes import DELIVERY_UNSERVICEABLE, NOTIFY_UNSERVICEABLE
 from sopuli.config.defaults import build_defaults, build_runtime
 from sopuli.config.delivery import build_delivery, unserviceable
 from sopuli.config.discovery import CONFIG_ENV
@@ -336,58 +336,8 @@ def build_config(
     config = replace(config, bindings=build_bindings(config))
     return replace(
         config,
-        warnings=(*layered, *warnings, *_policy_warnings(config), *_delivery_warnings(config)),
+        warnings=(*layered, *warnings, *_delivery_warnings(config)),
     )
-
-
-#: The flag that supplies each policy key a run does not read, or ``None`` where
-#: nothing does. A policy's `rotation:` and `verify:` are parsed and validated,
-#: and every run takes these from the command line instead.
-_UNREAD_POLICY_KEYS: dict[str, dict[str, str | None]] = {
-    "rotation": {
-        "strategy": "--strategy",
-        "rollover_hours": None,
-        "keep_previous": None,
-        "max_age_days": "--max-age-days",
-    },
-    "verify": {"method": "--method", "lockout_margin": "--lockout-margin"},
-}
-
-
-def _policy_warnings(config: Config) -> tuple[ConfigWarning, ...]:
-    """Say that a policy's `rotation:` or `verify:` keys change nothing.
-
-    The keys validate, so a file writing them reads as configuring something.
-    It does not (decision #610): the verbs take these from flags, and `check`
-    defaults to `login` whatever a policy says (Q1). One warning per block,
-    naming the keys written and the flag that does the job, where there is one.
-    """
-    found = []
-    for policy in config.policies:
-        for block_name, flags in _UNREAD_POLICY_KEYS.items():
-            block = getattr(policy, block_name)
-            written = [one.name for one in fields(block) if getattr(block, one.name) is not None]
-            if not written:
-                continue
-            flagged = [f"`{key}` with `{flags[key]}`" for key in written if flags[key]]
-            unflagged = [f"`{key}`" for key in written if not flags[key]]
-            remedies = []
-            if flagged:
-                remedies.append(f"the command line sets {', '.join(flagged)}")
-            if unflagged:
-                remedies.append(f"nothing sets {', '.join(unflagged)}")
-            found.append(
-                ConfigWarning(
-                    message=(
-                        f"{', '.join(f'`{key}`' for key in written)} "
-                        f"{'is' if len(written) == 1 else 'are'} parsed and not read"
-                    ),
-                    at=str(ROOT.key("policies").key(policy.name).key(block_name)),
-                    hint=f"no run reads these from a policy; {', and '.join(remedies)}",
-                    code=UNREAD_POLICY_KEYS,
-                )
-            )
-    return tuple(found)
 
 
 def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:

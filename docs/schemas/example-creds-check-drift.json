@@ -32,7 +32,7 @@
       "limit": null
     },
     "options": {
-      "verify.method": { "value": "hash", "source": "profile", "source_detail": "profiles.scheduled.verify.method" },
+      "output": { "value": "json", "source": "profile", "source_detail": "profiles.scheduled.output" },
       "vault.addr": { "value": "https://vault.example.com:8200", "source": "env", "source_detail": "SOPULI_VAULT_ADDR" }
     }
   },

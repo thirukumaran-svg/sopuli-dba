@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-2.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.0.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -381,7 +381,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-2.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.0.schema.json
 version: 1
 
 runtime:
@@ -488,12 +488,10 @@ policies:
 # How a run is invoked, as opposed to what it points at. See §5.
 profiles:
   ci:
-    verify: { method: hash }     # no login attempts from an unattended runner
     output: json
     confirm: false
     safety: { max_targets: 200 }
   scheduled:
-    verify: { method: hash }
     output: jsonl
 
 # ---------------------------------------------------------------------------
@@ -521,20 +519,10 @@ applications:
         secret_template: "tenants/_shared#DB_CREDENTIALS/{account}"
 ```
 
-Both `ci` and `scheduled` above set `method: hash`, and **a profile's `method`
-reaches no consumer**. The value is valid and recognised, and nothing reads it:
-`check`'s default is `login` unconditionally, regardless of profile
-(`02-oracle-privileges.md` §2). A caller who wants the comparison passes
-`--method hash` on the command line. Running one of
-these profiles without the flag verifies by `login`. That is the documented
-default rather than a substitution, but it is not what the profile appears to
-ask for, so a scheduled job should pass the flag explicitly.
-
-A policy may write `rotation:` and `verify:` blocks too. They are parsed and
-validated, and no run reads them, so the example leaves them out. The verbs take
-`--strategy`, `--max-age-days`, `--method` and `--lockout-margin` from the
-command line instead, and `config validate` warns about a policy that writes
-either block (§10).
+How a run verifies and rotates is set on the command line, not in the file:
+`--method`, `--lockout-margin`, `--strategy` and `--max-age-days`. `check`
+verifies by `login` unless `--method` says otherwise (`02-oracle-privileges.md`
+§2), so an unattended job that must not attempt logins passes `--method hash`.
 
 ### Why not the inline form
 
@@ -1782,9 +1770,8 @@ act on is always inspectable without connecting to anything.
 where you are running from.**
 
 `--profile scheduled` never changes which targets or accounts are in scope. It
-changes how the tool behaves while it works on them: whether it may prompt,
-whether it verifies by login or by hash comparison, what it prints, how loudly it
-logs.
+changes how the tool behaves while it works on them: whether it may prompt, how
+long it waits for a database, what it prints.
 
 This is the one thing to get right, because a selector-shaped option that is not
 a selector is a bad footgun in a tool that rotates credentials. Hence the naming
@@ -1798,17 +1785,12 @@ those three want genuinely different behaviour:
 | | interactive | ci | scheduled |
 |---|---|---|---|
 | may prompt for confirmation | yes | no | no |
-| verification method | `login` | `hash` | `hash` |
 | output | text | json | jsonl |
 | blast-radius guard | tight, a human is watching | wide, the plan is reviewed in the PR | wide |
 
 Without profiles this lives in environment variables scattered across a workflow
 file — unversioned, unreviewed, and invisible when someone asks why the nightly
 run behaved differently from the one they just did by hand.
-
-Without profiles, a setting such as the verification method for scheduled runs
-would have to live in a password policy. A policy describes credentials, not how
-a run is invoked.
 
 ### What a profile may contain
 
@@ -1818,14 +1800,11 @@ A closed list. Anything else is a validation error.
 |---|---|
 | `vault` | which named store to use, by name |
 | `vaults.<name>.*` | how to *reach* a named store — everything except the three below. This is what lets a profile say "token from a laptop, AppRole from CI" without re-declaring the store. Not `type`, and not `non_production` or `locking` — see below (C13) |
-| `verify.method` | `login` \| `hash` \| `both` \| `none` |
-| `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
 | `safety.*` | any key of a `safety:` block (§3a): `max_targets`, `confirm_environments`, `readonly`, `delivery.allowed_methods` |
 | `locking.break_expired` | may an unattended run take over an expired lock? The profile is where this belongs: it is a property of running without anybody watching |
 | `confirm` | whether interactive confirmation is possible at all. `false` makes every gate that would prompt refuse with exit 8 instead, even at a terminal; `--confirm` still answers in advance, except for the seen reset, which then cannot run. Unset means "ask if stdin is a terminal" |
 | `output` | `text` \| `json` \| `jsonl` |
 | `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs. `connect_timeout_s` defaults to 30 s — a connection that times out has applied nothing. `query_timeout_s` defaults to **no bound**, deliberately: a call timeout cancels the round trip without undoing what the server did with it, and `ALTER USER` is not transactional, so an imposed default turns a slow success into a run that cannot say whether the password changed. Invariant 7 has no answer for that state; an operator may still set one. **Both are consulted**: `_timeouts()` in `sopuli/cli.py` resolves the pair and passes it to every driver the tool builds, so a profile narrowing either changes what the connection does. `tests/settings/test_settings_are_wired.py` checks that each has a reader |
-| `rotation.strategy` | e.g. force `staged` where no human can watch a rollover. Only `strategy` — `rollover_hours` and the rest describe the credential's lifecycle, which belongs to the estate |
 
 ### Reaching a store differently, without redeclaring it
 
@@ -1919,16 +1898,15 @@ Rejected at validation, with a message naming the key:
    in `defaults.profile` is reported against that key; one typed on the command
    line has no line to point at, so it is reported against the file.
 
-**Not every key a profile may write is a setting.** `verify.*` and
-`rotation.strategy` are parsed and validated, and
-reach nothing, because nothing consumes them. They join the resolver with their
-consumers, which is the rule `sopuli/settings/registry.py` states. Layer 3
+**Every key a profile may write is read.** Through the resolver, layer 3
 supplies `output`, `confirm`, `safety.*`, `locking.break_expired`,
-`vaults.<name>.*`, `db.connect_timeout_s` and `db.query_timeout_s`. A profile's `vault` is read
-too, outside the resolver: it is the store a binding or an admin credential
-falls back to when nothing more specific names one (§3a). A profile writing an
-unconsumed key is not an error and does not appear in `invocation.options`,
-because it changed nothing.
+`db.connect_timeout_s` and `db.query_timeout_s`. Two keys are read outside it. A
+profile's `vaults.<name>.*` is merged into the store's declaration while the
+file is built (`sopuli/config/vault_layers.py`). Its `vault` is the store a
+binding or an admin credential falls back to when nothing more specific names
+one (§3a). A key joins the profile with its consumer, which is the
+rule `sopuli/settings/registry.py` states. A profile's `verify:` and `rotation:`
+had none, and were removed (§10).
 
 ### Naming
 
@@ -2835,7 +2813,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-2.0.schema.json`](../schemas/sopuli-config-2.0.schema.json),
+[`docs/schemas/sopuli-config-3.0.schema.json`](../schemas/sopuli-config-3.0.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2846,7 +2824,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-2.0.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.0.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2919,7 +2897,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-2.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.0.schema.json
 version: 1
 ```
 
@@ -2930,7 +2908,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-2.0.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.0.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -3179,11 +3157,10 @@ notices until a rotation.
   backend's own default
 - `VAULT_SKIP_VERIFY` set and non-empty → error (§6), naming
   `vaults.*.tls.verify` and what to write instead
-- a policy's `rotation:` or `verify:` keys → warning (`SOPULI-W034`), one per
-  block, naming the keys and the flag that sets each one where there is a flag.
-  They are parsed and validated, and no run reads them: `--strategy`,
-  `--max-age-days`, `--method` and `--lockout-margin` are the only way in, and
-  `check` defaults to `login` whatever a policy says
+- a key that was removed → error, naming the key and why it was removed (§9b).
+  A profile's `log_level`, `log_file`, `verify:` and `rotation:`, and a policy's
+  `verify:` and `rotation:`. No run read any of them. `--strategy`,
+  `--max-age-days`, `--method` and `--lockout-margin` set what the last four named
 - config file **accessible** to others → refuse to run (P4). Wider than "readable"
   on purpose: the file holds no secrets (C5), so the risk it carries is
   *tampering*, and a group-writable config is the worse version of that — anyone

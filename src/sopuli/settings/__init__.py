@@ -13,7 +13,7 @@ Two layers, deliberately separable:
 
 The unit is a setting rather than a command-line option, because half the things
 needing a merge policy have no flag: ``readonly`` arrives from a config file,
-``verify.method`` from a profile, ``safety.dry_run`` from either a flag or
+``db.connect_timeout_s`` from a profile, ``safety.dry_run`` from either a flag or
 ``SOPULI_DRY_RUN``. Flags, ``SOPULI_*`` variables and config keys all bind to
 setting names.
 

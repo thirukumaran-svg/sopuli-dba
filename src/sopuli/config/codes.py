@@ -14,7 +14,9 @@ the config builder.
 #: A store in this file does not verify the certificate it is offered (§3a).
 UNVERIFIED_TRANSPORT = "SOPULI-W004"
 
-#: A policy's `rotation:` or `verify:` block sets keys that no run reads.
+#: Retired: a policy's `rotation:` or `verify:` block set keys that no run read.
+#: The blocks were removed (#787), so nothing emits it. Kept so that the number
+#: is never given to another warning.
 UNREAD_POLICY_KEYS = "SOPULI-W034"
 
 #: `delivery.method` names a method this build cannot deliver with.

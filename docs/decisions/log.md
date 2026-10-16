@@ -1840,8 +1840,7 @@ the register.
   - A profile's `confirm: false`: implement. A gated run then refuses with exit
     8 unless `--confirm` is given.
   - A policy's `rotation.*` and `verify.*`, and the `rotation.strategy:
-    rollover` error: delete the claims, and `config validate` warns that these
-    keys are parsed and not read.
+    rollover` error: delete the claims. [#787](#787) later removed the keys.
   - The `printable_ascii` below 12.2 warning: delete. It gave no reason, every
     `printable_ascii` character is one byte, and the byte limit is enforced per
     target.
@@ -2031,11 +2030,8 @@ the register.
   - Keep `log_level` and `log_file` as profile defaults for the flag: a config
     would then turn debug output on for every run of a profile, including
     scheduled runs nobody watches. Keeping them unread leaves keys that look as
-    if they work. A profile's `verify.*` and `rotation.strategy` are also read
-    by nothing today, and they stay: each names a choice that a flag already
-    makes, so a profile default for it can have a reader later. The log keys
-    can never have one, because this decision says no config turns debug
-    output on.
+    if they work. [#787](#787) removed a profile's `verify.*` and
+    `rotation.strategy` for the same reason.
 
 ## #786
 
@@ -2237,3 +2233,31 @@ the register.
     after a takeover. It costs one more read per document, and it closes
     nothing: removing the `pending` would be another write with the same
     window.
+
+## #787
+
+- **Decided:** 2026-10-16, #787
+- **Question:** A profile's `verify:` and `rotation:` blocks, and a policy's,
+  were parsed, validated and read by nothing. A policy that wrote either block
+  got `SOPULI-W034`, and a profile got no warning. Warn about the profile's
+  too, wire them as defaults for the flags, or remove them?
+- **Decision:** Remove all four blocks before the repository goes public. A
+  config that writes one is refused with exit 9. The message says the block was
+  removed, and the hint names the flags that set what it named: `--method`,
+  `--lockout-margin`, `--strategy` and `--max-age-days`. `SOPULI-W034` is
+  retired. The config schema moves to 3.0.
+- **Why:** Adding an optional key later is a minor bump, and every config still
+  loads. Removing one later breaks every config that wrote it. So a key kept for
+  a reader to come later saves nothing: it can come back with its reader.
+  Keeping it also costs something. A config that wrote `verify: { method: hash }`
+  would change behaviour on the upgrade that wired it. Before any outside user
+  has a config, removing a key breaks nobody.
+- **Rejected:**
+  - Warn about a profile's keys, as for a policy's. It keeps keys that do
+    nothing, and the same upgrade problem.
+  - Wire them as defaults for the flags. `verify.method` accepts `none`, and
+    `--method` does not. `rotation.strategy` needs two decisions first: whether
+    a strategy in a profile counts as given, so that the refusals `--strategy`
+    triggers apply, and whether `--strategy` may relax it. `direct` ends a grace
+    window early. A profile default can still be added later, with its own
+    issue.

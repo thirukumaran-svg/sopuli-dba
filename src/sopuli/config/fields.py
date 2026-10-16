@@ -208,3 +208,21 @@ def reject_unknown_keys(
         at=at,
         hint=hint if hint is not None else f"known keys here: {', '.join(sorted(permitted))}",
     )
+
+
+def reject_removed_keys(
+    container: dict[str, Any], *, removed: dict[str, str], section: str, at: KeyPath
+) -> None:
+    """§9b: a key an older build accepted is refused by name, with why it is gone.
+
+    Called before :func:`reject_unknown_keys`, so that a file written for an older
+    build is not told it has a typo. ``removed`` maps each key to the reason, and
+    ``section`` names where it was removed from, such as ``profiles``.
+    """
+    for key in sorted(container):
+        if key in removed:
+            raise ConfigError(
+                f"`{key}:` was removed from {section}",
+                at=at.key(key),
+                hint=f"delete it; {removed[key]}",
+            )

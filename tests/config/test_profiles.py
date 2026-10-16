@@ -19,7 +19,6 @@ from sopuli.config.loading import build_config
 from sopuli.config.profiles import build_profiles, select_profile
 
 SCHEDULED: dict[str, Any] = {
-    "verify": {"method": "hash"},
     "output": "jsonl",
 }
 
@@ -39,19 +38,16 @@ def test_a_profile_is_read_whole() -> None:
         confirm=False,
         safety={"max_targets": 200},
         db={"connect_timeout_s": 30, "query_timeout_s": 120},
-        rotation={"strategy": "staged"},
         vault="vault-prod",
     )
 
     assert profile.name == "scheduled"
-    assert profile.verify.method == "hash"
     assert profile.output == "jsonl"
     assert profile.confirm is False
     assert profile.safety is not None
     assert profile.safety.max_targets == 200
     assert profile.db.connect_timeout_s == 30
     assert profile.db.query_timeout_s == 120
-    assert profile.rotation_strategy == "staged"
     assert profile.vault == "vault-prod"
 
 
@@ -138,14 +134,24 @@ def test_a_removed_log_key_is_refused_as_removed(key: str) -> None:
     assert "--debug" in str(caught.value)
 
 
-def test_a_profile_may_only_set_the_rotation_strategy() -> None:
-    """§5 lists `rotation.strategy` and nothing else. `rollover_hours` describes
-    the credential's lifecycle, which belongs to the estate rather than to the
-    machine running the command."""
+@pytest.mark.parametrize(
+    ("block", "value", "flags"),
+    [
+        ("verify", {"method": "hash"}, ("--method", "--lockout-margin")),
+        ("rotation", {"strategy": "staged"}, ("--strategy",)),
+    ],
+)
+def test_a_removed_block_is_refused_as_removed(
+    block: str, value: dict[str, Any], flags: tuple[str, ...]
+) -> None:
+    """No run read either block, so they were removed (#787). The refusal names
+    the flags that set what the block named."""
     with pytest.raises(ConfigError) as caught:
-        build_profiles(document(scheduled={"rotation": {"rollover_hours": 4}}))
+        build_profiles(document(scheduled={block: value}))
 
-    assert "unknown key 'rollover_hours'" in str(caught.value)
+    rendered = str(caught.value)
+    assert f"`{block}:` was removed from profiles" in rendered
+    assert all(flag in rendered for flag in flags)
 
 
 # ----------------------------------------------------------------- vault ---

@@ -1,4 +1,4 @@
-"""The ``policies:`` section -- password rules, rotation, verification.
+"""The ``policies:`` section -- password rules and the account itself.
 
 Tier 0, pure. Most of it is closed sets and ranges; the tests worth reading are
 the three that catch a file which looks fine and cannot work. Each of those would
@@ -22,13 +22,6 @@ APP_STANDARD: dict[str, Any] = {
         "first_char": "alpha",
         "require": {"upper": 1, "lower": 1, "digit": 1, "special": 1},
     },
-    "rotation": {
-        "strategy": "rollover",
-        "rollover_hours": 24,
-        "keep_previous": True,
-        "max_age_days": 90,
-    },
-    "verify": {"method": "login", "lockout_margin": 2},
     "account": {"unlock_if_locked": False},
 }
 
@@ -51,12 +44,6 @@ def test_a_policy_is_read_whole() -> None:
     assert policy.password.charset == "alnum_safe"
     assert policy.password.first_char == "alpha"
     assert policy.password.require == (("digit", 1), ("lower", 1), ("special", 1), ("upper", 1))
-    assert policy.rotation.strategy == "rollover"
-    assert policy.rotation.rollover_hours == 24
-    assert policy.rotation.keep_previous is True
-    assert policy.rotation.max_age_days == 90
-    assert policy.verify.method == "login"
-    assert policy.verify.lockout_margin == 2
     assert policy.account.unlock_if_locked is False
 
 
@@ -273,66 +260,34 @@ def test_an_unknown_charset_is_refused() -> None:
     assert "alnum_safe" in rendered
 
 
-@pytest.mark.parametrize("strategy", ["rollover", "staged", "direct"])
-def test_every_rotation_strategy_uc1_names_is_accepted(strategy: str) -> None:
-    assert only(rotation={"strategy": strategy}).rotation.strategy == strategy
-
-
-def test_an_unknown_rotation_strategy_is_refused() -> None:
+@pytest.mark.parametrize(
+    ("block", "flags"),
+    [
+        ("rotation", ("--strategy", "--max-age-days", "rollover_hours", "keep_previous")),
+        ("verify", ("--method", "--lockout-margin")),
+    ],
+)
+def test_a_removed_block_is_refused_by_name(block: str, flags: tuple[str, ...]) -> None:
+    """No run read either block, so they were removed (#787). The refusal says
+    so, rather than calling a key an older build accepted a typo, and names the
+    flags that set what the block named."""
     with pytest.raises(ConfigError) as caught:
-        build_policies(document(**{"p": {"rotation": {"strategy": "immediate"}}}))
+        build_policies(document(**{"p": {block: {}}}))
 
-    assert "unknown strategy 'immediate'" in str(caught.value)
-
-
-@pytest.mark.parametrize("method", ["login", "hash", "both", "none"])
-def test_every_verify_method_is_accepted(method: str) -> None:
-    assert only(verify={"method": method}).verify.method == method
-
-
-def test_an_unknown_verify_method_is_refused() -> None:
-    with pytest.raises(ConfigError) as caught:
-        build_policies(document(**{"p": {"verify": {"method": "hashh"}}}))
-
-    assert "unknown verify method 'hashh'" in str(caught.value)
-
-
-def test_scheduled_method_is_gone() -> None:
-    """It was run context hiding inside a password policy because there was
-    nowhere else to put it. §5 gave it somewhere: a profile overriding
-    `verify.method`. The old key must not quietly keep working."""
-    with pytest.raises(ConfigError) as caught:
-        build_policies(
-            document(**{"p": {"verify": {"method": "login", "scheduled_method": "hash"}}})
-        )
-
-    assert "unknown key 'scheduled_method'" in str(caught.value)
+    rendered = str(caught.value)
+    assert f"`{block}:` was removed from policies" in rendered
+    assert f"policies.p.{block}" in rendered
+    assert all(flag in rendered for flag in flags)
 
 
 # ----------------------------------------------------------------- ranges ---
 
 
-@pytest.mark.parametrize("key", ["length", "rollover_hours", "max_age_days"])
-def test_a_count_below_one_is_refused(key: str) -> None:
-    block = "password" if key == "length" else "rotation"
-
+def test_a_length_below_one_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
-        build_policies(document(**{"p": {block: {key: 0}}}))
+        build_policies(document(**{"p": {"password": {"length": 0}}}))
 
-    assert f"{key} must be at least 1, not 0" in str(caught.value)
-
-
-def test_a_negative_lockout_margin_is_refused() -> None:
-    with pytest.raises(ConfigError) as caught:
-        build_policies(document(**{"p": {"verify": {"lockout_margin": -1}}}))
-
-    assert "lockout_margin cannot be -1" in str(caught.value)
-
-
-def test_a_zero_lockout_margin_is_allowed() -> None:
-    """Zero means "use every attempt the profile allows" -- reckless, and a
-    legitimate thing to write down deliberately."""
-    assert only(verify={"lockout_margin": 0}).verify.lockout_margin == 0
+    assert "length must be at least 1, not 0" in str(caught.value)
 
 
 def test_an_unknown_policy_key_is_refused() -> None:

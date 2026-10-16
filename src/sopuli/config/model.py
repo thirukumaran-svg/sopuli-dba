@@ -675,29 +675,6 @@ class PasswordPolicy:
 
 
 @dataclass(frozen=True)
-class RotationPolicy:
-    """``policies.*.rotation`` -- how a new password replaces the old one (UC-1 §6)."""
-
-    strategy: str | None = None
-    rollover_hours: int | None = None
-    keep_previous: bool | None = None
-    max_age_days: int | None = None
-
-
-@dataclass(frozen=True)
-class VerifyPolicy:
-    """``verify:`` -- how the tool confirms a password works.
-
-    Shared with :class:`Profile`, because §5 makes ``verify.method`` the
-    canonical example of run context: the same estate is verified by login from a
-    laptop and by hash comparison from a scheduler.
-    """
-
-    method: str | None = None
-    lockout_margin: int | None = None
-
-
-@dataclass(frozen=True)
 class AccountPolicy:
     """``policies.*.account`` -- what the tool may do to the account itself.
 
@@ -718,12 +695,10 @@ class AccountPolicy:
 
 @dataclass(frozen=True)
 class Policy:
-    """One entry in ``policies:`` -- password rules, rotation, verification."""
+    """One entry in ``policies:`` -- password rules and the account itself."""
 
     name: str
     password: PasswordPolicy = field(default_factory=PasswordPolicy)
-    rotation: RotationPolicy = field(default_factory=RotationPolicy)
-    verify: VerifyPolicy = field(default_factory=VerifyPolicy)
     account: AccountPolicy = field(default_factory=AccountPolicy)
 
 
@@ -749,8 +724,6 @@ class Profile:
 
     name: str
     vault: str | None = None
-    verify: VerifyPolicy = field(default_factory=VerifyPolicy)
-    rotation_strategy: str | None = None
     safety: Safety | None = None
     locking: Locking | None = None
     confirm: bool | None = None

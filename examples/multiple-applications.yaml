@@ -10,7 +10,7 @@
 #
 # Full reference: ../docs/design/01-configuration.md
 
-# yaml-language-server: $schema=../docs/schemas/sopuli-config-2.0.schema.json
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-3.0.schema.json
 
 version: 1
 

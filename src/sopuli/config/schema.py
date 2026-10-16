@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-2.0.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.0.schema.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "2.0"
+SCHEMA_VERSION = "3.0"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -708,11 +708,9 @@ def _policy() -> Schema:
         keys=policies.POLICY_KEYS,
         types={
             "password": _ref("password_policy"),
-            "rotation": _ref("rotation_policy"),
-            "verify": _ref("verify_policy"),
             "account": _ref("account_policy"),
         },
-        description="Password rules, rotation strategy and verification, under one name.",
+        description="Password rules and what the tool may do to the account, under one name.",
     )
 
 
@@ -744,34 +742,6 @@ def _require() -> Schema:
         description=(
             "Minimum count per character class. A block no password of this length "
             "and charset could satisfy is refused by the validator, not here."
-        ),
-    )
-
-
-def _rotation_policy() -> Schema:
-    return _object(
-        keys=policies.ROTATION_KEYS,
-        types={
-            "strategy": _enum(policies.ROTATION_STRATEGIES),
-            "rollover_hours": POSITIVE_INT,
-            "keep_previous": BOOLEAN,
-            "max_age_days": POSITIVE_INT,
-        },
-        description="How a new password replaces the old one (UC-1 §6).",
-    )
-
-
-def _verify_policy() -> Schema:
-    return _object(
-        keys=policies.VERIFY_KEYS,
-        types={
-            "method": _enum(policies.VERIFY_METHODS),
-            "lockout_margin": {"type": "integer", "minimum": 0},
-        },
-        description=(
-            "How the tool confirms a password works. Shared with a profile, because "
-            "the same estate is verified by login from a laptop and by hash comparison "
-            "from a scheduler (§5)."
         ),
     )
 
@@ -814,8 +784,6 @@ def _profile() -> Schema:
         types={
             "vault": {**STRING, "description": "The name of an entry in `vaults:`."},
             "vaults": _ref("vault_patches"),
-            "verify": _ref("verify_policy"),
-            "rotation": _ref("profile_rotation"),
             "safety": _ref("safety"),
             "locking": _ref("locking"),
             "confirm": BOOLEAN,
@@ -826,18 +794,6 @@ def _profile() -> Schema:
             "Where a run is invoked from -- `interactive`, `ci`, `scheduled` -- never "
             "what it points at. Everything here changes how the tool behaves; nothing "
             "here changes which targets or accounts are in scope (§5)."
-        ),
-    )
-
-
-def _profile_rotation() -> Schema:
-    return _object(
-        keys=profiles.ROTATION_KEYS,
-        types={"strategy": _enum(policies.ROTATION_STRATEGIES)},
-        description=(
-            "Only `strategy`. The rest of a rotation policy describes the credential's "
-            "lifecycle, which is a property of the estate rather than of the machine "
-            "running the command."
         ),
     )
 
@@ -1237,7 +1193,7 @@ def _root() -> Schema:
         "targets": _array(_ref("target"), description="Explicitly listed endpoints (§2)."),
         "target_sets": _map_of(_ref("target_set"), description="Generated endpoints (§4)."),
         "groups": _map_of(_ref("group"), description="Named label selections (§4)."),
-        "policies": _map_of(_ref("policy"), description="Password and rotation rules (§8)."),
+        "policies": _map_of(_ref("policy"), description="Password and account rules (§8)."),
         "profiles": _map_of(_ref("profile"), description="Run contexts (§5)."),
         "applications": _array(
             _ref("application"),
@@ -1297,11 +1253,8 @@ def build_schema() -> Schema:
             "policy": _policy(),
             "password_policy": _password_policy(),
             "require": _require(),
-            "rotation_policy": _rotation_policy(),
-            "verify_policy": _verify_policy(),
             "account_policy": _account_policy(),
             "profile": _profile(),
-            "profile_rotation": _profile_rotation(),
             "profile_db": _profile_db(),
             "defaults": _defaults(),
             "runtime": _runtime(),

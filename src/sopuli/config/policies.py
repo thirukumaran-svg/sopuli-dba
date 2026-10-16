@@ -1,4 +1,4 @@
-"""Building the ``policies:`` section -- password rules, rotation, verification.
+"""Building the ``policies:`` section -- password rules and the account itself.
 
 Most of this is reading closed sets and range-checking numbers. Three rules earn
 their place by catching a config that looks fine and cannot work:
@@ -33,17 +33,25 @@ from sopuli.config.fields import (
     optional_bool,
     optional_int,
     optional_string,
+    reject_removed_keys,
     reject_unknown_keys,
 )
-from sopuli.config.model import (
-    AccountPolicy,
-    PasswordPolicy,
-    Policy,
-    RotationPolicy,
-    VerifyPolicy,
-)
+from sopuli.config.model import AccountPolicy, PasswordPolicy, Policy
 
-POLICY_KEYS = ("password", "rotation", "verify", "account")
+POLICY_KEYS = ("password", "account")
+
+#: Why a `verify:` block is gone. Profiles had one too, and the reason is the same.
+REMOVED_VERIFY = "no run read it; --method and --lockout-margin set these on the command line"
+
+#: Keys a policy could once write, each with why it is gone (#787). Refused by
+#: name, so that a file written for an older build is not told it has a typo.
+REMOVED_KEYS = {
+    "rotation": (
+        "no run read it; --strategy and --max-age-days are on the command line, "
+        "and nothing sets rollover_hours or keep_previous"
+    ),
+    "verify": REMOVED_VERIFY,
+}
 
 PASSWORD_KEYS = ("length", "charset", "allow", "first_char", "require")
 
@@ -61,16 +69,6 @@ FIRST_CHARS = (charsets.ALPHA,)
 #: demands one cannot drift -- the published schema generates from this too.
 REQUIRE_KEYS = charsets.CLASS_NAMES
 
-ROTATION_KEYS = ("strategy", "rollover_hours", "keep_previous", "max_age_days")
-
-#: UC-1 §6: rollover where the capability exists, staged where it does not,
-#: direct when a leak means the old password must die immediately.
-ROTATION_STRATEGIES = ("rollover", "staged", "direct")
-
-VERIFY_KEYS = ("method", "lockout_margin")
-
-VERIFY_METHODS = ("login", "hash", "both", "none")
-
 ACCOUNT_KEYS = ("unlock_if_locked", "profile")
 
 
@@ -86,13 +84,12 @@ def build_policies(document: dict[str, Any]) -> tuple[Policy, ...]:
 
 def _build_policy(name: str, raw: Any, *, at: KeyPath) -> Policy:
     entry = mapping(raw, at=at)
+    reject_removed_keys(entry, removed=REMOVED_KEYS, section="policies", at=at)
     reject_unknown_keys(entry, allowed=POLICY_KEYS, at=at)
 
     return Policy(
         name=name,
         password=_build_password(entry.get("password"), at=at.key("password")),
-        rotation=_build_rotation(entry.get("rotation"), at=at.key("rotation")),
-        verify=build_verify(entry.get("verify"), at=at.key("verify")),
         account=_build_account(entry.get("account"), at=at.key("account")),
     )
 
@@ -263,50 +260,7 @@ def _widen(policy: PasswordPolicy, name: str) -> str:
     return f"use `alnum_safe`, which adds {charsets.SAFE_SPECIALS_SPACED} (§8)"
 
 
-# ------------------------------------------------- rotation and the rest ---
-
-
-def _build_rotation(raw: Any, *, at: KeyPath) -> RotationPolicy:
-    if raw is None:
-        return RotationPolicy()
-    block = mapping(raw, at=at)
-    reject_unknown_keys(block, allowed=ROTATION_KEYS, at=at)
-
-    strategy = block.get("strategy")
-    return RotationPolicy(
-        strategy=(
-            None
-            if strategy is None
-            else choice(
-                strategy, allowed=ROTATION_STRATEGIES, at=at.key("strategy"), noun="strategy"
-            )
-        ),
-        rollover_hours=_positive(block, "rollover_hours", at=at),
-        keep_previous=optional_bool(block, "keep_previous", at=at),
-        max_age_days=_positive(block, "max_age_days", at=at),
-    )
-
-
-def build_verify(raw: Any, *, at: KeyPath) -> VerifyPolicy:
-    """``verify:`` -- shared with profiles, which is the whole point of §5."""
-    if raw is None:
-        return VerifyPolicy()
-    block = mapping(raw, at=at)
-    reject_unknown_keys(block, allowed=VERIFY_KEYS, at=at)
-
-    method = block.get("method")
-    margin = optional_int(block, "lockout_margin", at=at)
-    if margin is not None and margin < 0:
-        raise ConfigError(f"lockout_margin cannot be {margin}", at=at.key("lockout_margin"))
-
-    return VerifyPolicy(
-        method=(
-            None
-            if method is None
-            else choice(method, allowed=VERIFY_METHODS, at=at.key("method"), noun="verify method")
-        ),
-        lockout_margin=margin,
-    )
+# ------------------------------------------------------------- account ---
 
 
 def _build_account(raw: Any, *, at: KeyPath) -> AccountPolicy:

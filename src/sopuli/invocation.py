@@ -143,10 +143,6 @@ GLOBAL_PARAMS = (
 #: this list is simply never asked, which is why it is short and explicit rather
 #: than "everything in the registry". A setting joins it when something reads it.
 #:
-#: `verify.method` is absent. A profile may write it: it is parsed and
-#: validated, but nothing reads it, which is the rule
-#: `sopuli/settings/registry.py` states.
-#:
 #: **A setting with a reader must be listed here.** A name absent from this tuple
 #: is never in `Invocation.resolved`, so a read of it returns `None` on every run
 #: and the built-in is used whatever the profile said. That key looks wired from
