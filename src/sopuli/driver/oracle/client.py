@@ -35,6 +35,20 @@ CLIENT_LIB_DIR_ENV = "SOPULI_ORACLE_CLIENT_LIB_DIR"
 #: prose that differs between releases.
 NO_CLIENT = "DPI-1047"
 
+#: The start-up failures that mean the client on this machine cannot be used:
+#: not found (``DPI-1047``), older than the driver needs (``DPI-1050``), or a
+#: version the driver does not support (``DPI-1072``). Installing a working
+#: client fixes each, so each is a :class:`ClientError`. Any other start-up
+#: failure is classified as usual, because installing a client may not fix it.
+CLIENT_UNUSABLE = (NO_CLIENT, "DPI-1050", "DPI-1072")
+
+
+#: ``error.code`` for an Instant Client that could not be loaded
+#: (``03-json-output.md`` §3). Installing the client, or pointing this tool at
+#: it, fixes it, where a change to the targets, the stores or a credential fixes
+#: most ``config`` errors. So a consumer must be able to tell it apart (J3).
+CLIENT_NOT_LOADED = "SOPULI-20004"
+
 
 class ClientError(ConfigError):
     """Instant Client is missing, or too broken to load.
@@ -44,11 +58,9 @@ class ClientError(ConfigError):
     incomplete is *this machine*, and the person reading the message is the one
     who fixes it. Not ``capability``, which names something the database at the
     far end cannot do and no local action changes.
-
-    No ``error.code`` yet. J3 gives it one: installing something fixes it, where
-    a change to the configuration, or to what it points at, fixes most ``config``
-    errors. #801 adds it.
     """
+
+    code = CLIENT_NOT_LOADED
 
 
 @dataclass(frozen=True)
@@ -165,8 +177,10 @@ def connect_arguments(
         arguments["externalauth"] = True
         return arguments
 
+    # Plain `ConfigError`s, not `ClientError`: the file or a variable fixes
+    # these, as for any `config` error, so they have no code.
     if credential.username is None:
-        raise ClientError(
+        raise ConfigError(
             f"target {target.name!r} has no username to connect as",
             at=at,
             hint=(
@@ -175,7 +189,7 @@ def connect_arguments(
             ),
         )
     if credential.secret is None:  # pragma: no cover - `admin.resolve` never returns this
-        raise ClientError(
+        raise ConfigError(
             f"target {target.name!r} resolved no password and is not using a wallet",
             at=at,
         )

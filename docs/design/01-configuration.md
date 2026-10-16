@@ -793,7 +793,7 @@ What changes is where it stops:
 | Moment | With the backend missing |
 |---|---|
 | load, `config validate`, `config show`, `target list` | works. `config validate` adds a **warning** (§9, §10), and exits 0 |
-| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3) |
+| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `oci`, `file` and `keyring`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
 | `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
 
 ```

@@ -529,13 +529,17 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A `vaults:` entry names a backend this machine cannot serve. The config is "
             "valid and the install is incomplete, and what that is worth depends on the "
             "question asked: `config validate` warns and exits 0, `doctor` fails, and any "
-            "command that resolves that store to a client fails with SOPULI-20001."
+            "command that resolves that store to a client fails, with SOPULI-20001 where "
+            "the client is not installed and SOPULI-20005 where this build has no module "
+            "for the type."
         ),
         MISSING_DRIVER: (
             "A `targets:` entry names a driver this machine cannot serve. As with a store, "
             "the config is valid and the install is incomplete, and what that is worth "
             "depends on the question asked: `config validate` warns and exits 0, `doctor` "
-            "fails, and any command that connects to that target fails with SOPULI-20002."
+            "fails, and any command that connects to that target fails, with SOPULI-20002 "
+            "where the client is not installed and SOPULI-20006 where this build has no "
+            "module for the type."
         ),
         PASSWORD_GRACE_PERIOD: (
             "An account's password is in its grace period: it still authenticates, and it "

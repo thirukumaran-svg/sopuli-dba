@@ -29,6 +29,7 @@ from sopuli.config.model import Config, ExpandedTarget, Target
 from sopuli.config.targets import TARGET_TYPES
 from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, install_diagnostics
 from sopuli.driver.registry import (
+    DRIVER_NOT_IMPLEMENTED,
     DRIVER_NOT_INSTALLED,
     DRIVERS,
     DatabaseDriver,
@@ -155,7 +156,7 @@ def test_a_driver_this_build_does_not_have_never_says_pip(
         resolve(target(type_name="postgresql"))
 
     assert "pip install" not in str(refused.value)
-    assert refused.value.code is None
+    assert refused.value.code == DRIVER_NOT_IMPLEMENTED == "SOPULI-20006"
 
 
 def test_a_bad_import_inside_the_driver_is_ours_and_is_re_raised(

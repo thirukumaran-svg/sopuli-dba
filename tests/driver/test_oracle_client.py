@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
+    CLIENT_NOT_LOADED,
     NO_CLIENT,
     ClientError,
     Timeouts,
@@ -98,15 +100,44 @@ def test_the_dsn_is_passed_through_whatever_shape_it_is_in(dsn: str) -> None:
     assert arguments["dsn"] == dsn
 
 
+@pytest.mark.parametrize(
+    "code",
+    ["DPI-1047", "DPI-1050", "DPI-1072"],
+    ids=["not-found", "too-old", "unsupported"],
+)
+def test_a_client_that_cannot_start_carries_its_code(
+    monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    """Through `initialise`, not only `missing_client`: the match on the driver's
+    code is what decides whether a real run gets `SOPULI-20004`."""
+    session = pytest.importorskip("sopuli.driver.oracle.session")
+    oracledb = pytest.importorskip("oracledb")
+
+    def refuse(**_: object) -> None:
+        raise oracledb.DatabaseError(f"{code}: the client library cannot be used")
+
+    monkeypatch.setattr(session, "_initialised", False)
+    monkeypatch.setattr(session.oracledb, "init_oracle_client", refuse)
+
+    with pytest.raises(ClientError) as refused:
+        session.initialise(env={}, platform="linux")
+
+    assert refused.value.code == CLIENT_NOT_LOADED
+    assert code in str(refused.value)
+
+
 def test_a_credential_with_no_username_is_refused_before_the_connection() -> None:
     """Not a traceback and not an ORA-01017 twenty seconds later. The three ways
     to supply one are in the hint, because an operator hitting this has to pick
     one of them."""
-    with pytest.raises(ClientError) as refused:
+    with pytest.raises(ConfigError) as refused:
         connect_arguments(target(), Credential(secret=Secret("hunter2")), timeouts=Timeouts())
 
+    assert not isinstance(refused.value, ClientError)
     assert "cdb-root-qa" in str(refused.value)
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+    # The file or a variable fixes this, as for any `config` error, so no code (J3).
+    assert refused.value.code is None
     hint = refused.value.hint or ""
     assert "SOPULI_DB_ADMIN_USER" in hint
     assert "external" in hint
@@ -192,3 +223,4 @@ def test_the_drivers_own_diagnosis_survives_into_the_message() -> None:
     assert "thick mode is required" in str(error)
     assert error.exit_code == ExitCode.CONFIG_INVALID
     assert error.category == "config"
+    assert error.code == CLIENT_NOT_LOADED == "SOPULI-20004"

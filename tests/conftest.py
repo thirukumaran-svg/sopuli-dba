@@ -484,8 +484,8 @@ def _why(exc: BaseException) -> str:
     from sopuli.driver.oracle.errors import CLIENT_LIBRARY, from_error
 
     if isinstance(exc, ClientError):
-        # Already worded for exactly this reader: it names DPI-1047, keeps the
-        # driver's own detail about which library failed, and carries the
+        # Already worded for exactly this reader: it keeps the driver's own code
+        # and its detail about which library failed, and carries the
         # per-platform remediation. Running it back through `from_error` would
         # classify our own exception as an unreadable driver failure.
         #

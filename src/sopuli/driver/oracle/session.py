@@ -64,7 +64,7 @@ from sopuli.driver.oracle.capabilities import (
 )
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
-    NO_CLIENT,
+    CLIENT_UNUSABLE,
     Timeouts,
     connect_arguments,
     missing_client,
@@ -205,7 +205,7 @@ def initialise(
         try:
             oracledb.init_oracle_client(lib_dir=env.get(CLIENT_LIB_DIR_ENV) or lib_dir or None)
         except oracledb.Error as error:
-            if NO_CLIENT in str(error):
+            if any(code in str(error) for code in CLIENT_UNUSABLE):
                 raise missing_client(str(error), platform=platform) from error
             # Anything else the client raised on the way up. Mapped rather than
             # re-raised, because `connect` promises that every failure arrives

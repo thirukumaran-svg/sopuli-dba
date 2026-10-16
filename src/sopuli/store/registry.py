@@ -41,6 +41,12 @@ from sopuli.store.protocol import SecretStore
 #: without parsing the message.
 BACKEND_NOT_INSTALLED = "SOPULI-20001"
 
+#: ``error.code`` for a backend type this build has no module for. Its own code,
+#: apart from :data:`sopuli.driver.registry.DRIVER_NOT_IMPLEMENTED`, for the
+#: reason ``SOPULI-20001`` and ``SOPULI-20002`` are two: a store and a database
+#: are different outages.
+BACKEND_NOT_IMPLEMENTED = "SOPULI-20005"
+
 
 @dataclass(frozen=True)
 class Backend:
@@ -135,10 +141,12 @@ class BackendNotImplementedError(ConfigError):
     -- and it is reachable, because `01-configuration.md` §3a accepts backend
     types that :data:`BACKENDS` maps to a module this build does not have.
 
-    No ``error.code`` yet. J3 gives it one: the configuration is right and there
-    is nothing to install, so a consumer must tell it from the ``config`` errors
-    that a change to either fixes. #801 adds it.
+    It has a code because the configuration is right and there is nothing to
+    install, so a consumer must tell it from the ``config`` errors that a change
+    to either fixes (J3).
     """
+
+    code = BACKEND_NOT_IMPLEMENTED
 
 
 def installed(backend: Backend) -> bool:

@@ -52,6 +52,12 @@ from sopuli.extras import installed as extras_installed
 #: The next number after ``SOPULI-20001``, its store equivalent (J3).
 DRIVER_NOT_INSTALLED = "SOPULI-20002"
 
+#: ``error.code`` for a driver type this build has no module for: the driver
+#: equivalent of ``SOPULI-20005``. A separate code because a store and a
+#: database are different outages, which is also why ``SOPULI-20001`` and this
+#: module's ``SOPULI-20002`` are two.
+DRIVER_NOT_IMPLEMENTED = "SOPULI-20006"
+
 
 @dataclass(frozen=True)
 class DatabaseDriver:
@@ -138,10 +144,12 @@ class DriverNotImplementedError(ConfigError):
     ``TARGET_TYPES`` -- and discovering then that the failure path is a
     ``KeyError`` is discovering it in the worst way.
 
-    No ``error.code`` yet. J3 gives it one: the configuration is right and there
-    is nothing to install, so a consumer must tell it from the ``config`` errors
-    that a change to either fixes. #801 adds it.
+    It has a code because the configuration is right and there is nothing to
+    install, so a consumer must tell it from the ``config`` errors that a change
+    to either fixes (J3).
     """
+
+    code = DRIVER_NOT_IMPLEMENTED
 
 
 def installed(driver: DatabaseDriver) -> bool:

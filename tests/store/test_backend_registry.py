@@ -24,6 +24,7 @@ from sopuli.config.model import Vault
 from sopuli.config.vaults import VAULT_TYPES
 from sopuli.exit_codes import ExitCode
 from sopuli.store.registry import (
+    BACKEND_NOT_IMPLEMENTED,
     BACKEND_NOT_INSTALLED,
     BACKENDS,
     Backend,
@@ -192,7 +193,7 @@ def test_an_unwritten_backend_is_not_a_pip_problem(monkeypatch: pytest.MonkeyPat
 
     assert "no hashicorp backend yet" in caught.value.message
     assert "pip install" not in (caught.value.hint or "")
-    assert caught.value.code is None
+    assert caught.value.code == BACKEND_NOT_IMPLEMENTED == "SOPULI-20005"
 
 
 def test_a_broken_import_inside_a_backend_is_re_raised(
