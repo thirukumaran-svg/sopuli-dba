@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from sopuli.diagnostics import CURRENT_REPLACED, PENDING_REPLACED, POLICY_VIOLATION_ACCEPTED
 from sopuli.generate import VAULT_ONLY, Candidate, DocumentWrite
 from sopuli.lock.keys import LockKey
 from sopuli.output.document import Error, Summary
@@ -172,6 +173,7 @@ def _warnings(
         found.append(
             {
                 "level": "warning",
+                "code": PENDING_REPLACED,
                 "message": (
                     f"replaced a pending password that was already staged "
                     f"(document version {replaced}); anything holding it is now stale"
@@ -183,6 +185,7 @@ def _warnings(
         found.append(
             {
                 "level": "warning",
+                "code": CURRENT_REPLACED,
                 "message": (
                     "replaced the `current` password; the vault now advertises one no "
                     "database has been given -- run `sopuli creds apply` to converge them"
@@ -194,6 +197,7 @@ def _warnings(
         found.append(
             {
                 "level": "warning",
+                "code": POLICY_VIOLATION_ACCEPTED,
                 "message": (
                     f"--no-policy-check accepted a password that violates "
                     f"{violation.rule}: {violation.detail}"

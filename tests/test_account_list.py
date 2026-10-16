@@ -24,6 +24,7 @@ import pytest
 from sopuli.account_list import (
     ABSENT,
     DECLARED,
+    Notice,
     Row,
     cross_declared,
     enumerated_names,
@@ -32,6 +33,7 @@ from sopuli.account_list import (
 )
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
+from sopuli.diagnostics import ADMITTED_CROSS_DECLARED, ADMITTED_VENDOR_ACCOUNT
 from sopuli.driver.protocol import UserState
 from sopuli.output.account_list_view import (
     build_result,
@@ -134,6 +136,38 @@ def test_an_account_a_predicate_and_an_application_both_declare_is_named() -> No
     assert cross_declared(both, "jdoe") is None
 
 
+def test_the_row_gives_each_notice_its_own_code() -> None:
+    """`_describe_row` is where each notice gets its code, so a swap of the two
+    codes, or a lost one, fails here rather than passing every view test."""
+    from sopuli.cli import _describe_row
+
+    both = config(
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+        applications=[
+            {
+                "name": "acme",
+                "accounts": ["acme_web_user"],
+                "secret": "vault-dev:acme/db#pw",
+            }
+        ],
+        personal_accounts=[{"profile": "DEV_USERS"}],
+    )
+    target = next(one for one in both.targets if one.name == TARGET)
+
+    class Session:
+        def describe_user(self, name: str) -> UserState:
+            return user(name.upper(), profile="DEV_USERS", vendor_maintained=True)
+
+    row = _describe_row(Session(), "acme_web_user", target, both)
+
+    assert [notice.code for notice in row.notices] == [
+        ADMITTED_VENDOR_ACCOUNT,
+        ADMITTED_CROSS_DECLARED,
+    ]
+    assert "as its own" in row.notices[0].message
+    assert "also declared by acme" in row.notices[1].message
+
+
 # ------------------------------------------------------------------ rows ---
 
 
@@ -182,6 +216,25 @@ def test_the_database_date_absence_carries_its_reason_per_result() -> None:
     entry = build_result(Row(account="JDOE", target=TARGET, rule=rule, state=unknown))
 
     assert [warning["code"] for warning in entry["warnings"]] == ["SOPULI-W021"]
+
+
+def test_a_rows_notices_carry_their_codes() -> None:
+    """Each notice is its own condition with its own code (J3), so a consumer
+    can tell "the database owns this account" from "the whitelist is ambiguous"
+    without reading the message."""
+    rule = config().personal_accounts[0]
+    notices = (
+        Notice(ADMITTED_VENDOR_ACCOUNT, "the database reports this account as its own"),
+        Notice(ADMITTED_CROSS_DECLARED, "also declared by acme"),
+    )
+    entry = build_result(
+        Row(account="JDOE", target=TARGET, rule=rule, state=user("JDOE"), notices=notices)
+    )
+
+    assert [warning["code"] for warning in entry["warnings"]] == [
+        ADMITTED_VENDOR_ACCOUNT,
+        ADMITTED_CROSS_DECLARED,
+    ]
 
 
 def test_a_reset_at_is_emitted_only_when_there_is_one() -> None:

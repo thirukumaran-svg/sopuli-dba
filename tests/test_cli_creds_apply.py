@@ -40,6 +40,8 @@ from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
     LOCK_TAKEN_OVER,
+    PRIVILEGE_AUDIT_UNREAD,
+    PROFILE_UNREAD,
     PROMOTION_FAILED,
     PROMOTION_WITHHELD,
     REPAIR_DOCUMENT_STALE,
@@ -1197,8 +1199,10 @@ def test_a_profile_read_that_failed_is_reported_and_does_not_stop_the_survey(
 
     # Reported for **both** targets: an escaping exception would have taken the
     # first target's findings with it and never reached the second.
-    diagnostics = [one["message"] for one in document(result).get("diagnostics", [])]
-    assert sum("could not establish" in one for one in diagnostics) == 2
+    diagnostics = document(result).get("diagnostics", [])
+    unread = [one for one in diagnostics if "could not establish" in one["message"]]
+    assert len(unread) == 2
+    assert {one["code"] for one in unread} == {PROFILE_UNREAD}
     # Not blocking, so the run went on to try -- and the account is an ERROR
     # because the driver asks the same question again before its own statement.
     assert [one["state"] for one in document(result)["results"]] == [check.ERROR, check.ERROR]
@@ -2242,6 +2246,7 @@ def test_an_unreadable_audit_is_a_caveat_and_not_a_refusal(
     assert found["exit_code"] == ExitCode.SUCCESS
     assert [one["level"] for one in found["diagnostics"]] == ["warning"]
     assert "could not be read" in found["diagnostics"][0]["message"]
+    assert found["diagnostics"][0]["code"] == PRIVILEGE_AUDIT_UNREAD
 
 
 @pytest.mark.parametrize("mode", [(), ("--dry-run",)], ids=["run", "dry-run"])

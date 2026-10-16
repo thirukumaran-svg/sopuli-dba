@@ -39,6 +39,7 @@ from sopuli.cli import _reach, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
+from sopuli.diagnostics import ROLLOVER_LEFT_OPEN
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -1427,8 +1428,12 @@ def test_a_window_left_open_is_a_warning_in_the_document(
         "json",
     )
 
-    messages = [one["message"] for one in document(result)["diagnostics"]]
-    assert any("left the rollover window open" in one for one in messages)
+    [left] = [
+        one
+        for one in document(result)["diagnostics"]
+        if "left the rollover window open" in one["message"]
+    ]
+    assert left["code"] == ROLLOVER_LEFT_OPEN
 
 
 def test_one_documents_read_back_does_not_withhold_anothers_repair(

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.40.schema.json`](../schemas/sopuli-run-1.40.schema.json),
+Schemas: [`../schemas/sopuli-run-1.41.schema.json`](../schemas/sopuli-run-1.41.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1845,6 +1845,16 @@ not contract and may improve.
 | `SOPULI-W037` | A profile has the name of an environment that a target declares. `--profile <name>` selects no targets, because a profile changes how a run behaves, not what it acts on (`01-configuration.md` §5) |
 | `SOPULI-W038` | A third-party store variable, such as `VAULT_ADDR`, is set and was not applied, because the run has no default store: no layer names one, or the one named is not declared (`01-configuration.md` §6). The message says which. A warning, not a refusal, because the variable may belong to something else on the machine |
 | `SOPULI-W039` | A layer asked to relax a safety setting, and the ratchet held (invariant 10). The message names both ends: the layer that asked, and where the value that held is set. One code for every safety setting, `vaults.*.tls.verify` included. Nothing failed, and the run uses the safer value |
+| `SOPULI-W040` | `creds status --max-age-days`: the vault last rotated this credential longer ago than the threshold. One entry per result over it. The age is the vault's (Q9). `password_age_days` is the database's, so the two are never one field |
+| `SOPULI-W041` | `account list` admitted an account the database reports as its own, so a mutating verb refuses it at plan time (guardrail 2). A `role:` predicate can reach one, because creating a role grants it to the creator: on the tier-1 stack that was `SYSTEM` |
+| `SOPULI-W042` | `account list` admitted an account that an application also declares, so the whitelist is ambiguous about which guarantee applies ([H1](../decisions/log.md#h1)). Only a predicate can reach this, because an enumerated name in both sections is refused when the file loads (`01-configuration.md` §10). A separate code from `SOPULI-W041`, because the fix is in the file, not in the database |
+| `SOPULI-W043` | `creds rotate --finish-rollover` left a rollover window open, because the vault may not serve the new password. Run `creds finish-rollover` once `current` holds it; where the promotion did not happen, `creds apply` promotes it first. The message names the accounts and targets |
+| `SOPULI-W044` | The pre-flight could not read the privilege audit for a target, so it established nothing about the target's grants, either way. A finding of the `privileges` check that does **not** block: an estate that will not grant the audit view could otherwise never run a pre-flight. Each pre-flight check that can warn has its own code. A blocking finding is an `error` diagnostic with no code, because `error.category` already tells it apart |
+| `SOPULI-W045` | The pre-flight could not establish whether the profile an account would move to exists. A finding of the `profile` check that does not block, for `SOPULI-W044`'s reason. The driver asks the same question again before its own statement and refuses that account, so what is lost is the early warning |
+| `SOPULI-W046` | `creds generate --overwrite-pending` replaced a `pending` password that was already staged, on a staging run or a `--promote`. Anything holding the old one is now stale. The message names the document version replaced. In `results[].warnings[]` |
+| `SOPULI-W047` | `creds generate --promote --overwrite-current` replaced `current` (decision #257). The vault now advertises a password no database has been given, until `creds apply` converges them. A warning, not an error, because the flag is the operator asking for exactly this. In `results[].warnings[]` |
+| `SOPULI-W048` | `creds generate --no-policy-check` accepted a password that violates the policy. One entry per rule violated, naming the rule and the counts, never the characters. In `results[].warnings[]` |
+| `SOPULI-W049` | On one `creds apply` result: `current` may not hold the password this database has, so an application that fetches it may fail to log in. Either the database changed and did not confirm, and `creds apply` again once the target is well fixes it, or the promotion write failed, and `SOPULI-W033` on the run says what to do. The message says which. In `results[].warnings[]`, so it survives a consumer that filters the results |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.
@@ -1853,11 +1863,8 @@ nothing emits a code the registry does not describe.
 That covers `diagnostics[]`, `results[].warnings[]` and the config layer's
 findings (`01-configuration.md` §10). A consumer branches on the code, because
 the message is not contract. A warning with no code could only be matched on its
-text. Some run warnings do not have their code yet: #798.
-`tests/test_warning_codes.py` lists them, fails on a
-new warning built without a code, and fails when a listed one gains its code
-until the list is shortened. Diagnostics at `info` level are not warnings, and
-have no code.
+text. `tests/test_warning_codes.py` fails on a warning built without a code.
+Diagnostics at `info` level are not warnings, and have no code.
 
 **Codes are one flat series**, `SOPULI-W001` upwards, with no ranges by
 category. The next code is the next free number. A number is never reused: when

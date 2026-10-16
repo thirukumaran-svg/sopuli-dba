@@ -15,7 +15,10 @@ Two properties carry most of it, and both are about restraint:
 
 from __future__ import annotations
 
+import pytest
+
 from sopuli import preflight
+from sopuli.diagnostics import PRIVILEGE_AUDIT_UNREAD
 from sopuli.driver.protocol import Scope
 
 
@@ -190,10 +193,28 @@ def test_a_survey_of_caveats_alone_refuses_nothing() -> None:
     """An estate that will not grant the audit view must still be able to run a
     pre-flight; the caveat is reported and the run goes ahead."""
     findings = (
-        preflight.Finding("appdb-alpha", preflight.PRIVILEGES, "could not be read", blocking=False),
+        preflight.Finding(
+            "appdb-alpha",
+            preflight.PRIVILEGES,
+            "could not be read",
+            blocking=False,
+            code=PRIVILEGE_AUDIT_UNREAD,
+        ),
     )
 
     assert preflight.refusal(findings) is None
+
+
+def test_a_finding_that_does_not_block_needs_a_code_and_one_that_blocks_has_none() -> None:
+    """A finding that does not block becomes a warning, and every warning has a
+    code (J3). `tests/test_warning_codes.py` cannot see that path, so the
+    finding checks the pairing itself."""
+    with pytest.raises(ValueError, match="needs a warning code"):
+        preflight.Finding("appdb-alpha", preflight.PRIVILEGES, "unreadable", blocking=False)
+    with pytest.raises(ValueError, match="has no code"):
+        preflight.Finding(
+            "appdb-alpha", preflight.SCOPE, "wrong container", code=PRIVILEGE_AUDIT_UNREAD
+        )
 
 
 def test_nothing_found_refuses_nothing() -> None:
@@ -206,7 +227,13 @@ def test_the_summary_counts_only_what_blocks() -> None:
     findings = (
         preflight.Finding("appdb-alpha", preflight.SCOPE, "wrong container"),
         preflight.Finding("appdb-beta", preflight.ACCOUNT, "no such user"),
-        preflight.Finding("appdb-beta", preflight.PRIVILEGES, "unreadable", blocking=False),
+        preflight.Finding(
+            "appdb-beta",
+            preflight.PRIVILEGES,
+            "unreadable",
+            blocking=False,
+            code=PRIVILEGE_AUDIT_UNREAD,
+        ),
     )
 
     line = preflight.summarise(findings)

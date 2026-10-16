@@ -91,7 +91,13 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
     the same field, so the two commands cannot describe one absence differently.
     """
     found = [
-        Diagnostic(level="warning", message=notice, account=row.account, target=row.target)
+        Diagnostic(
+            level="warning",
+            code=notice.code,
+            message=notice.message,
+            account=row.account,
+            target=row.target,
+        )
         for notice in row.notices
     ]
     unknown = None if row.state is None else row.state.password_changed_unknown

@@ -13,6 +13,7 @@ from typing import Any
 from sopuli import apply, check
 from sopuli.config.model import Binding
 from sopuli.config.secret_refs import parse_secret_ref
+from sopuli.diagnostics import CHANGED_NOT_PROMOTED
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     FAIL,
@@ -220,7 +221,8 @@ def test_a_changed_database_with_no_promotion_is_a_warning() -> None:
         changed=True,
     )
 
-    assert any("was not promoted" in one["message"] for one in entry["warnings"])
+    [warning] = [one for one in entry["warnings"] if "was not promoted" in one["message"]]
+    assert warning["code"] == CHANGED_NOT_PROMOTED
 
 
 def test_a_failed_promotion_is_on_the_confirmed_row() -> None:

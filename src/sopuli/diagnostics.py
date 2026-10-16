@@ -7,8 +7,7 @@ machine-readable codes with a documented registry. This is that registry.
 ``03-json-output.md`` §3). The codes are one flat series, ``SOPULI-W001``
 upwards. The next code is the next free number, and a number is never reused.
 ``tests/test_warning_codes.py`` fails on two codes with one number, on a gap,
-and on a registry that disagrees with the document's table. A few run warnings
-have no code yet (#798).
+and on a registry that disagrees with the document's table.
 
 For `doctor`, it is settled **when a finding gets a diagnostic at all**: one
 for what the exit code cannot tell you. An unreachable store fails the run, so
@@ -460,6 +459,49 @@ CONNECTION_ENCRYPTION_UNKNOWN = "SOPULI-W032"
 #: the vault, because a refused compare-and-set means another writer.
 PROMOTION_FAILED = "SOPULI-W033"
 
+#: `creds status --max-age-days`: the vault last rotated this credential longer
+#: ago than the threshold. The vault's age, not the database's, which is why it
+#: is a warning and not ``password_age_days`` (Q9).
+ROTATION_OVERDUE = "SOPULI-W040"
+
+#: `account list` admitted an account the database reports as its own, so a
+#: mutating verb refuses it at plan time (guardrail 2).
+ADMITTED_VENDOR_ACCOUNT = "SOPULI-W041"
+
+#: `account list` admitted an account that an application also declares, which
+#: only a predicate can reach (H1).
+ADMITTED_CROSS_DECLARED = "SOPULI-W042"
+
+#: `creds rotate --finish-rollover` left a rollover window open, because the
+#: vault may not serve the new password.
+ROLLOVER_LEFT_OPEN = "SOPULI-W043"
+
+#: The pre-flight could not read the privilege audit, so it established nothing
+#: about the target's grants. A finding of the ``privileges`` check that does
+#: not block. Each pre-flight check that can warn has its own code.
+PRIVILEGE_AUDIT_UNREAD = "SOPULI-W044"
+
+#: The pre-flight could not establish whether the profile an account would move
+#: to exists. A finding of the ``profile`` check that does not block.
+PROFILE_UNREAD = "SOPULI-W045"
+
+#: `creds generate --overwrite-pending` replaced a ``pending`` that was already
+#: staged.
+PENDING_REPLACED = "SOPULI-W046"
+
+#: `creds generate --promote --overwrite-current` replaced ``current``.
+CURRENT_REPLACED = "SOPULI-W047"
+
+#: `creds generate --no-policy-check` accepted a password that violates the
+#: policy. One per rule the password violates.
+POLICY_VIOLATION_ACCEPTED = "SOPULI-W048"
+
+#: On one `creds apply` result: ``current`` may not hold the password this
+#: database has, because the database changed and did not confirm, or because
+#: the promotion write failed (:data:`PROMOTION_FAILED` says why, once per
+#: document).
+CHANGED_NOT_PROMOTED = "SOPULI-W049"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -750,6 +792,58 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A layer asked to relax a safety setting, and the ratchet held (invariant 10). "
             "The message names both ends: the layer that asked, and where the value that "
             "held is set. Nothing failed, and the run uses the safer value."
+        ),
+        ROTATION_OVERDUE: (
+            "`creds status --max-age-days`: the vault last rotated this credential longer "
+            "ago than the threshold. The age is the vault's, not the database's, which is "
+            "`password_age_days`. One entry per result over the threshold."
+        ),
+        ADMITTED_VENDOR_ACCOUNT: (
+            "`account list` admitted an account the database reports as its own, so a "
+            "mutating verb refuses it at plan time (guardrail 2). A `role:` predicate can "
+            "reach one, because creating a role grants it to the creator."
+        ),
+        ADMITTED_CROSS_DECLARED: (
+            "`account list` admitted an account that an application also declares, so the "
+            "whitelist is ambiguous about which guarantee applies (H1). Only a predicate can "
+            "reach this: an enumerated name in both is refused when the file loads."
+        ),
+        ROLLOVER_LEFT_OPEN: (
+            "`creds rotate --finish-rollover` left a rollover window open, because the vault "
+            "may not serve the new password. Run `creds finish-rollover` once `current` holds "
+            "it. The message names the accounts and targets."
+        ),
+        PRIVILEGE_AUDIT_UNREAD: (
+            "The pre-flight could not read the privilege audit for a target, so it "
+            "established nothing about the target's grants either way. The run was not "
+            "refused over it. A finding of the `privileges` check."
+        ),
+        PROFILE_UNREAD: (
+            "The pre-flight could not establish whether the profile an account would move to "
+            "exists. The run was not refused over it, and the driver asks again before its "
+            "own statement. A finding of the `profile` check."
+        ),
+        PENDING_REPLACED: (
+            "`creds generate --overwrite-pending` replaced a `pending` password that was "
+            "already staged. Anything holding the old one is now stale. The message names the "
+            "document version replaced."
+        ),
+        CURRENT_REPLACED: (
+            "`creds generate --promote --overwrite-current` replaced `current`. The vault now "
+            "advertises a password no database has been given, until `creds apply` converges "
+            "them."
+        ),
+        POLICY_VIOLATION_ACCEPTED: (
+            "`creds generate --no-policy-check` accepted a password that violates the "
+            "policy. One entry per rule violated, naming the rule and the counts, never the "
+            "characters."
+        ),
+        CHANGED_NOT_PROMOTED: (
+            "On one `creds apply` result: `current` may not hold the password this database "
+            "has, so an application that fetches it may fail to log in. Either the database "
+            "changed and did not confirm, and `creds apply` again once the target is well "
+            "fixes it, or the promotion write failed, and SOPULI-W033 on the run says what "
+            "to do. The message says which."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "

@@ -94,6 +94,14 @@ class Resolution:
 
 
 @dataclass(frozen=True)
+class Notice:
+    """A finding about one row, with its ``SOPULI-Wnnn`` code (J3)."""
+
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
 class Row:
     """One account on one target, as the listing reports it."""
 
@@ -109,7 +117,7 @@ class Row:
     #: Three absences with one rendering and three different diagnostics — §3.4.
     reset_at: str | None = None
     #: Findings about this row that belong beside it rather than at the run level.
-    notices: tuple[str, ...] = field(default_factory=tuple)
+    notices: tuple[Notice, ...] = field(default_factory=tuple)
     #: Why this target could not be answered at all, where it could not.
     #:
     #: Distinct from ``state is None``, and that distinction is the whole reason

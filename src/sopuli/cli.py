@@ -114,6 +114,8 @@ from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import Handover, Receipt
 from sopuli.diagnostics import (
+    ADMITTED_CROSS_DECLARED,
+    ADMITTED_VENDOR_ACCOUNT,
     CONSTRAINTS_UNREAD,
     LOCK_LOST,
     LOCK_PATH_UNGUARDED,
@@ -123,6 +125,9 @@ from sopuli.diagnostics import (
     PASSWORD_GRACE_PERIOD,
     PASSWORD_NOT_REDRAWN,
     PASSWORD_REDRAWN,
+    PRIVILEGE_AUDIT_UNREAD,
+    PROFILE_UNREAD,
+    ROLLOVER_LEFT_OPEN,
     ROTATION_UNCONFIRMED,
     admin_diagnostics,
     constraint_diagnostics,
@@ -3573,7 +3578,7 @@ def _describe_row(
     roles = tuple(state.roles) if state is not None and state.roles else ()
     admitted = account_list.rule_for(config, name, target.name, profile=profile, roles=roles)
 
-    notices: list[str] = []
+    notices: list[account_list.Notice] = []
     # A predicate can admit an account a mutating verb would refuse, and the
     # commonest case is not hypothetical: creating a role grants it to the
     # creator, so `role: ACME_DEV_TEAM` admits whoever ran the CREATE ROLE --
@@ -3582,16 +3587,22 @@ def _describe_row(
     # said would be overstating the whitelist it exists to let somebody review.
     if state is not None and state.vendor_maintained:
         notices.append(
-            "the database reports this account as its own, so a mutating verb refuses it "
-            "at plan time (guardrail 2) -- a predicate can admit an account no reset will "
-            "touch, and creating a role grants it to the creator"
+            account_list.Notice(
+                ADMITTED_VENDOR_ACCOUNT,
+                "the database reports this account as its own, so a mutating verb refuses "
+                "it at plan time (guardrail 2) -- a predicate can admit an account no reset "
+                "will touch, and creating a role grants it to the creator",
+            )
         )
     owner = account_list.cross_declared(config, name)
     if owner is not None:
         notices.append(
-            f"also declared by {owner}: the whitelist is ambiguous about which guarantee "
-            f"applies, and only a predicate can reach this -- an enumerated name is "
-            f"refused when the file loads"
+            account_list.Notice(
+                ADMITTED_CROSS_DECLARED,
+                f"also declared by {owner}: the whitelist is ambiguous about which guarantee "
+                f"applies, and only a predicate can reach this -- an enumerated name is "
+                f"refused when the file loads",
+            )
         )
 
     return account_list.Row(
@@ -7710,6 +7721,7 @@ def _preflight_target(
                 hint="nothing about this target's grants was established, either way",
                 category="authorization",
                 blocking=False,
+                code=PRIVILEGE_AUDIT_UNREAD,
             ),
         )
     else:
@@ -7802,6 +7814,7 @@ def _preflight_target(
                     account=binding.account,
                     category=reported.category,
                     blocking=False,
+                    code=PROFILE_UNREAD,
                 )
             )
             continue
@@ -7833,12 +7846,11 @@ def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
     pre-flight actually established.
 
     ``level`` carries the distinction -- ``error`` for a finding that refused the
-    run, ``warning`` for one that could not establish anything. No diagnostic *code*
-    is allocated: `03-json-output.md` §3's rule is that a code exists for what the
-    exit code cannot tell you, and on a refusal the run-level `error.category`
-    already says which kind of problem stopped it -- ``connectivity``,
-    ``authorization`` or ``database``, which is the branch a consumer needs. A code
-    would be a fourth spelling of `check`.
+    run, ``warning`` for one that could not establish anything. A warning carries
+    its finding's code, one per check that can warn (J3, decided on #798). An
+    error carries none: the run-level `error.category` already says which kind of
+    problem stopped it -- ``connectivity``, ``authorization`` or ``database`` --
+    which is the branch a consumer needs.
     """
     return [
         Diagnostic(
@@ -7846,6 +7858,7 @@ def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
             message=f"{one.check}: {one.message}",
             target=one.target,
             account=one.account,
+            code=one.code,
         )
         for one in findings
     ]
@@ -9716,7 +9729,9 @@ def _rotate_estate(
                 "promotion did not happen, `sopuli creds apply` promotes it first"
             )
             into.caveats.append(note)
-            document.diagnostics.append(Diagnostic(level="warning", message=note))
+            document.diagnostics.append(
+                Diagnostic(level="warning", message=note, code=ROLLOVER_LEFT_OPEN)
+            )
         try:
             into.closed = _close_windows(
                 settled,

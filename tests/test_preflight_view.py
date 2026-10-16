@@ -9,6 +9,7 @@ counts, and never what merely appeared in the table.
 from __future__ import annotations
 
 from sopuli import preflight
+from sopuli.diagnostics import PRIVILEGE_AUDIT_UNREAD, PROFILE_UNREAD
 from sopuli.output.preflight_view import caveat_notes, render_preflight
 
 
@@ -18,7 +19,11 @@ def blocking(target: str = "appdb-alpha") -> preflight.Finding:
 
 def caveat(target: str = "appdb-alpha") -> preflight.Finding:
     return preflight.Finding(
-        target, preflight.PRIVILEGES, "the audit could not be read", blocking=False
+        target,
+        preflight.PRIVILEGES,
+        "the audit could not be read",
+        blocking=False,
+        code=PRIVILEGE_AUDIT_UNREAD,
     )
 
 
@@ -99,6 +104,7 @@ def test_one_cause_over_many_accounts_is_one_line_naming_them() -> None:
             "could not establish whether profile 'P' exists here: ORA-00942",
             account=name,
             blocking=False,
+            code=PROFILE_UNREAD,
         )
         for name in ("acme_web_user", "acme_batch_user")
     ]
@@ -122,6 +128,7 @@ def test_a_multi_line_server_message_stays_inside_its_note() -> None:
         preflight.PRIVILEGES,
         "the privilege audit could not be read: ORA-00942: no table\nHelp: https://example.com",
         blocking=False,
+        code=PRIVILEGE_AUDIT_UNREAD,
     )
 
     (note,) = caveat_notes([finding])

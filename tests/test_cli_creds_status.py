@@ -23,6 +23,7 @@ from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
+from sopuli.diagnostics import ROTATION_OVERDUE
 from sopuli.driver.protocol import Credential, Scope, UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
@@ -379,7 +380,8 @@ def test_the_threshold_reports_which_clock_it_read(
     result = run(runner, write_config(CONFIG), "--max-age-days", "90", "--output", "json")
 
     entry = next(one for one in document(result)["results"] if one["account"] == "acme_batch_user")
-    assert any("the vault last rotated" in one["message"] for one in entry["warnings"])
+    [overdue] = [one for one in entry["warnings"] if "the vault last rotated" in one["message"]]
+    assert overdue["code"] == ROTATION_OVERDUE
 
 
 # ------------------------------------------------------------- the states ---

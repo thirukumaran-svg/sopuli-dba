@@ -33,6 +33,7 @@ from typing import Any
 from sopuli.apply import CONFIRMED, Source, counts, is_confirmed, is_failure, is_inconclusive
 from sopuli.check import ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
+from sopuli.diagnostics import CHANGED_NOT_PROMOTED
 from sopuli.driver.guardrails import Refusal
 from sopuli.driver.protocol import FAIL, PASS, AttributeChange, VerifyResult
 from sopuli.output.document import Error, Summary
@@ -357,6 +358,9 @@ def _warnings(
         found.append(
             {
                 "level": "warning",
+                # One code for both messages: either way `current` may not hold
+                # the password this database has.
+                "code": CHANGED_NOT_PROMOTED,
                 "message": message,
                 "account": binding.account,
                 "target": binding.target,

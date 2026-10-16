@@ -15,8 +15,7 @@ key keeps the last value without a word. So this checks, for each series:
 * every code written anywhere in `src/` is in the table;
 * the highest number is the one recorded, so a code is retired and never deleted.
 
-It also checks J3's rule itself: every warning built in `src/` has a code, apart
-from the ones `UNCODED` lists with the issue that codes them.
+It also checks J3's rule itself: every warning built in `src/` has a code.
 
 The pull request that merges second then fails on its rebase, and takes the next
 free number before it merges.
@@ -66,7 +65,7 @@ PREFIX = {"warning": "SOPULI-W", "error": "SOPULI-"}
 #: The highest number given so far in each series. A pull request that adds a
 #: code raises it here. A number is never reused, so deleting the highest row and
 #: its constant must fail, and without this the other checks would still pass.
-HIGHEST = {"warning": 39, "error": 20003}
+HIGHEST = {"warning": 49, "error": 20003}
 
 
 def _constants(pattern: re.Pattern[str]) -> dict[str, list[str]]:
@@ -218,21 +217,6 @@ def test_the_registry_describes_every_warning_in_the_table() -> None:
     assert set(WARNINGS) == set(_table(heading, pattern))
 
 
-#: The warnings built with no code today, by module and function, with how many
-#: each builds and the issue that gives them codes. **This list only shrinks.** A
-#: new warning without a code fails :func:`test_every_warning_has_a_code`, and a
-#: site that gains its codes fails :func:`test_the_uncoded_list_is_current` until
-#: its line is removed here.
-UNCODED = {
-    "sopuli/cli.py::_preflight_diagnostics": (1, 798),
-    "sopuli/cli.py::_rotate_estate": (1, 798),
-    "sopuli/output/account_list_view.py::_warnings": (1, 798),
-    "sopuli/output/apply_view.py::_warnings": (1, 798),
-    "sopuli/output/generate_view.py::_warnings": (3, 798),
-    "sopuli/output/status_view.py::_warnings": (1, 798),
-}
-
-
 def _is_warning_level(level: ast.expr | None) -> bool:
     """A level that is, or may be, ``warning``. A computed level counts."""
     return level is not None and not (isinstance(level, ast.Constant) and level.value != "warning")
@@ -294,18 +278,6 @@ def _uncoded_warnings() -> dict[str, int]:
 def test_every_warning_has_a_code() -> None:
     """J3's rule: a warning that reaches a run document has a code."""
     found = _uncoded_warnings()
-    new = {site: count for site, count in found.items() if count > UNCODED.get(site, (0, 0))[0]}
-    assert not new, (
-        f"warnings built with no code; give each a SOPULI-Wnnn code (03-json-output.md §3): {new}"
+    assert not found, (
+        f"warnings built with no code; give each a SOPULI-Wnnn code (03-json-output.md §3): {found}"
     )
-
-
-def test_the_uncoded_list_is_current() -> None:
-    """A site that gained its codes leaves :data:`UNCODED`, so the list only shrinks."""
-    found = _uncoded_warnings()
-    stale = {
-        site: (count, found.get(site, 0))
-        for site, (count, _) in UNCODED.items()
-        if found.get(site, 0) != count
-    }
-    assert not stale, f"UNCODED lists more than src/ builds; lower or remove these: {stale}"

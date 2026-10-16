@@ -26,6 +26,7 @@ from sopuli.clock import utc_now
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
 from sopuli.constraints import AccountConstraints
+from sopuli.diagnostics import CURRENT_REPLACED, PENDING_REPLACED, POLICY_VIOLATION_ACCEPTED
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError
 from sopuli.lock.keys import LockKey
@@ -227,7 +228,8 @@ def test_replacing_a_staged_password_warns_that_it_did(
     body = document(run(runner, config, "--overwrite-pending", "--output", "json"))
 
     warnings = body["results"][0]["warnings"]
-    assert any("replaced a pending" in one["message"] for one in warnings)
+    [replaced] = [one for one in warnings if "replaced a pending" in one["message"]]
+    assert replaced["code"] == PENDING_REPLACED
 
 
 def test_a_staged_pending_is_refused_without_the_flag(
@@ -630,7 +632,9 @@ def test_no_policy_check_accepts_it_and_records_what_it_accepted(
 
     assert staged(store)["acme_web_user"] == "short"
     warnings = body["results"][0]["warnings"]
-    assert any("--no-policy-check accepted" in one["message"] for one in warnings)
+    accepted = [one for one in warnings if "--no-policy-check accepted" in one["message"]]
+    assert accepted
+    assert {one["code"] for one in accepted} == {POLICY_VIOLATION_ACCEPTED}
 
 
 def test_an_empty_stdin_is_refused(
@@ -1405,12 +1409,13 @@ def test_replacing_a_current_is_warned_about_per_account(
     by_account = {entry["account"]: entry for entry in found["results"]}
 
     replaced = [
-        one["message"]
+        one
         for one in by_account["acme_web_user"].get("warnings", [])
         if "replaced the `current`" in one["message"]
     ]
     assert len(replaced) == 1
-    assert "no database has been given" in replaced[0]
+    assert "no database has been given" in replaced[0]["message"]
+    assert replaced[0]["code"] == CURRENT_REPLACED
     assert by_account["acme_batch_user"].get("warnings", []) == []
     assert "replaced the current" in by_account["acme_web_user"]["actions"][0]["detail"]
     assert "replaced the current" not in by_account["acme_batch_user"]["actions"][0]["detail"]

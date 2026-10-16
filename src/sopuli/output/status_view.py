@@ -28,7 +28,11 @@ from sopuli.check import (
     is_failure,
     password_age_days,
 )
-from sopuli.diagnostics import PASSWORD_CHANGE_DATE_UNKNOWN, PASSWORD_GRACE_PERIOD
+from sopuli.diagnostics import (
+    PASSWORD_CHANGE_DATE_UNKNOWN,
+    PASSWORD_GRACE_PERIOD,
+    ROTATION_OVERDUE,
+)
 from sopuli.driver.oracle.rollover import days as rollover_days
 from sopuli.driver.protocol import UserState
 from sopuli.output.document import Diagnostic, Error, Summary
@@ -131,14 +135,14 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
 
     Built through :class:`~sopuli.output.document.Diagnostic`, because two
     hand-rolled dicts in one array are two chances to disagree about a shape the
-    schema states once. The age warning has no ``code`` yet; #798 adds it.
-    ``to_dict`` omits an absent ``code`` rather than nulling it.
+    schema states once.
     """
     found = []
     if row.over_age:
         found.append(
             Diagnostic(
                 level="warning",
+                code=ROTATION_OVERDUE,
                 message=(
                     f"the vault last rotated this {row.age} days ago, past the "
                     f"--max-age-days threshold"
