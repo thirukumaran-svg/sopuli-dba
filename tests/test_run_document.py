@@ -306,9 +306,10 @@ def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> N
 
     ``tests/test_schemas.py`` validates the example against the schema, and it
     passes whatever a run produces -- conformance is not the claim *a run
-    produces this*. The example is hand-written and cited from the design
-    documents, so a key in it that no run can emit is a documented lie about the
-    tool's output.
+    produces this*. The example is a real run's output, edited only to remove
+    the machine's identity, and it is cited from the design documents. A key in
+    it that no run can emit would be a documented lie about the tool's output,
+    so this still holds it to what the producer writes.
 
     Checked as a subset rather than an equality: an example showing a narrower
     run than the maximum is exactly what an example is for.
@@ -316,7 +317,7 @@ def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> N
     every_field = RunDocument.start("creds.check")
     every_field.profile = "scheduled"
     every_field.config_files = ("/etc/sopuli/config.yaml",)
-    every_field.selection = {"applications": ["orders-app"]}
+    every_field.selection = {"applications": ["acme"]}
     every_field.options = {"output": Option(value="json", source="cli")}
     producible = set(every_field.finish(ExitCode.SUCCESS).to_dict()["invocation"])
 
