@@ -812,15 +812,15 @@ class ConfigWarning:
     JSON contract has a ``diagnostics`` array these become. Same fields as
     :class:`~sopuli.config.errors.ConfigError` so both render identically.
 
-    ``code`` is a slot that every warning fills (J3). Only ``SOPULI-W004`` fills
-    it today, for a run with certificate verification turned off. #797 adds the
-    codes for the other §10 findings.
+    ``code`` is the warning's ``SOPULI-Wnnn`` code from
+    :mod:`sopuli.config.codes`. It is required, because every warning has one
+    (J3), and keyword-only, because it follows a field with a default.
     """
 
     message: str
     at: str
     hint: str | None = None
-    code: str | None = None
+    code: str = field(kw_only=True)
 
     def __str__(self) -> str:
         rendered = f"{self.at}: {self.message}" if self.at else self.message

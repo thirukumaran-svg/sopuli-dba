@@ -20,8 +20,8 @@ from typing import Any
 from click.testing import CliRunner
 
 from sopuli.cli import cli
+from sopuli.config.codes import UNVERIFIED_TRANSPORT
 from sopuli.config.loading import build_config
-from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.diagnostics import WARNINGS
 from sopuli.exit_codes import ExitCode
 

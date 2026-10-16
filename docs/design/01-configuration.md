@@ -280,9 +280,9 @@ config layer could know it.
 
 **The tool does not validate the keys inside the other methods' sub-blocks**, so
 a typo inside one is accepted. That is why **`config validate` warns when the
-selected method is not implemented in this build**, so that a clean parse does
-not read as a working delivery. `IMPLEMENTED` in `sopuli/config/delivery.py`
-lists the methods this build serves.
+selected method is not implemented in this build** (`SOPULI-W035`), so that a
+clean parse does not read as a working delivery. `IMPLEMENTED` in
+`sopuli/config/delivery.py` lists the methods this build serves.
 
 **The published schema leaves every sub-block open** (§9b). The tool leaves an
 *unselected* sub-block unjudged on purpose, so `required: ["ttl"]`, a pattern on
@@ -349,7 +349,7 @@ a missing client is refused before anything connects (`SOPULI-20003`, exit 9). A
 failed post does not fail the run: the password has already changed, so the run
 reports it as warning `SOPULI-W026` and somebody tells the person another way.
 `config validate` warns about a configured channel only when it cannot send:
-its method is not built, or its client is not installed.
+its method is not built, or its client is not installed (`SOPULI-W036`).
 
 **`safety.delivery.allowed_methods` restricts the set an estate may use**, and it
 is not a key of this block: it is a safety axis, ratcheting by intersection under
@@ -843,7 +843,7 @@ for a profile, which is layer 3 and above the declaration.
 The one exception is `tls.verify`, which is under the safety ratchet: there the
 safest layer wins whichever it is, so a `verify: true` written anywhere holds
 against a `verify: false` written anywhere else, and the request that lost is
-reported as a warning naming both ends (invariant 10).
+reported as a warning naming both ends, `SOPULI-W039` (invariant 10).
 
 `auth:` is **replaced whole** and `tls:` is **merged key by key**. Not an
 inconsistency: an `auth:` block's keys are only meaningful together with a
@@ -2021,7 +2021,8 @@ Where nothing names a default store, the two halves answer differently:
 - **A third-party variable warns** and is not applied. `VAULT_ADDR` is exported
   in every shell that has run `vault`, and it was not set for this tool at all;
   failing a run over somebody else's variable would be taking a position on an
-  environment the tool does not own. The warning appears in `diagnostics[]`.
+  environment the tool does not own. The warning appears in `diagnostics[]`
+  as `SOPULI-W038`.
 
 ### `--vault-addr` — layer 1, and the only flag of its kind
 
@@ -3156,8 +3157,8 @@ notices until a rotation.
   reason and with no `require:` block needed to reach it
 - `--profile` or `SOPULI_PROFILE` naming a profile that does not exist → error,
   never a silent fallback to defaults
-- a profile name matching any target's `environment` value → warning, explaining
-  that a profile does not select targets
+- a profile name matching any target's `environment` value → warning
+  (`SOPULI-W037`), explaining that a profile does not select targets
 - a `vaults:` entry whose `type` names a backend that is not installed → warning,
   naming the store, the type and the extra that supplies it (ADR-006, E4). Not an
   error: nothing about the file is wrong, and `01-configuration.md` §3a has
@@ -3178,11 +3179,11 @@ notices until a rotation.
   backend's own default
 - `VAULT_SKIP_VERIFY` set and non-empty → error (§6), naming
   `vaults.*.tls.verify` and what to write instead
-- a policy's `rotation:` or `verify:` keys → warning, one per block, naming the
-  keys and the flag that sets each one where there is a flag. They are parsed
-  and validated, and no run reads them: `--strategy`, `--max-age-days`,
-  `--method` and `--lockout-margin` are the only way in, and `check` defaults to
-  `login` whatever a policy says
+- a policy's `rotation:` or `verify:` keys → warning (`SOPULI-W034`), one per
+  block, naming the keys and the flag that sets each one where there is a flag.
+  They are parsed and validated, and no run reads them: `--strategy`,
+  `--max-age-days`, `--method` and `--lockout-margin` are the only way in, and
+  `check` defaults to `login` whatever a policy says
 - config file **accessible** to others → refuse to run (P4). Wider than "readable"
   on purpose: the file holds no secrets (C5), so the risk it carries is
   *tampering*, and a group-writable config is the worse version of that — anyone

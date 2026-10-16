@@ -35,6 +35,7 @@ from typing import Any
 
 from sopuli.config.applications import build_applications
 from sopuli.config.bindings import build_bindings
+from sopuli.config.codes import DELIVERY_UNSERVICEABLE, NOTIFY_UNSERVICEABLE, UNREAD_POLICY_KEYS
 from sopuli.config.defaults import build_defaults, build_runtime
 from sopuli.config.delivery import build_delivery, unserviceable
 from sopuli.config.discovery import CONFIG_ENV
@@ -383,6 +384,7 @@ def _policy_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                     ),
                     at=str(ROOT.key("policies").key(policy.name).key(block_name)),
                     hint=f"no run reads these from a policy; {', and '.join(remedies)}",
+                    code=UNREAD_POLICY_KEYS,
                 )
             )
     return tuple(found)
@@ -397,8 +399,8 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
     as a file that would hand somebody a password, and a file naming a method
     this build does not implement would not.
 
-    No code yet. Every warning gets one (J3), and #797 adds the codes for this
-    one and the other §10 warnings.
+    Two codes, `SOPULI-W035` for the method and `SOPULI-W036` for the notify
+    channel, because an estate can have one working and the other not.
     """
     found = []
     notice = unserviceable(config.delivery)
@@ -411,6 +413,7 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                     "the block is valid and this build cannot act on it; nothing is wrong "
                     "with the file"
                 ),
+                code=DELIVERY_UNSERVICEABLE,
             )
         )
     # The notify channel's own. A second warning rather than a widened
@@ -431,6 +434,7 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                     "failing because it is the question *is this file usable here*, and the "
                     "answer is yes everywhere but this block"
                 ),
+                code=NOTIFY_UNSERVICEABLE,
             )
         )
     return tuple(found)

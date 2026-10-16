@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import PROFILE_NAMED_AFTER_ENVIRONMENT
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 
@@ -506,6 +507,7 @@ def test_a_profile_named_after_an_environment_warns_rather_than_fails() -> None:
 
     (warning,) = config.warnings
     assert "named after an environment" in warning.message
+    assert warning.code == PROFILE_NAMED_AFTER_ENVIRONMENT
     assert warning.at == "profiles.prod"
     assert "selects no targets" in str(warning)
     assert "interactive, ci, scheduled" in str(warning)

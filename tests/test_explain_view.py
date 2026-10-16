@@ -15,6 +15,7 @@ for any setting that needs them.
 
 from __future__ import annotations
 
+from sopuli.config.codes import RELAXATION_DEFEATED
 from sopuli.output.explain_view import BUILT_IN, ratchet_notes, render_settings, section
 from sopuli.secrets import REDACTED, Secret
 from sopuli.settings import Contribution, Layer, resolve
@@ -209,6 +210,7 @@ def test_a_defeated_relaxation_is_a_warning_diagnostic() -> None:
     )
 
     assert note.level == "warning"
+    assert note.code == RELAXATION_DEFEATED
     assert "asked for 200" in note.message
 
 

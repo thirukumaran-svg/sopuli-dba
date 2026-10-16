@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import RELAXATION_DEFEATED
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Vault
@@ -238,6 +239,9 @@ def test_a_defeated_relaxation_is_reported_rather_than_swallowed() -> None:
 
     notes = [str(warning) for warning in config.warnings if "ratchet" in str(warning)]
     assert len(notes) == 1
+    assert [warning.code for warning in config.warnings if "ratchet" in str(warning)] == [
+        RELAXATION_DEFEATED
+    ]
     assert "vaults.vault-prod.tls.verify" in notes[0]
     assert "defaults.vaults.vault-prod.tls.verify" in notes[0]
     assert "invariant 10" in notes[0]

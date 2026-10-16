@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import DELIVERY_UNSERVICEABLE, NOTIFY_UNSERVICEABLE
 from sopuli.config.delivery import (
     DEFAULT_METHOD,
     DELIVERY_METHODS,
@@ -308,8 +309,38 @@ def test_the_warning_reaches_config_warnings_rather_than_only_the_helper() -> No
     found = [warning for warning in config.warnings if "not implemented" in warning.message]
     assert len(found) == 1
     assert found[0].at == "delivery.method"
+    assert found[0].code == DELIVERY_UNSERVICEABLE
     assert found[0].hint is not None
     assert "nothing is wrong with the file" in found[0].hint
+
+
+def test_a_channel_that_cannot_send_warns_with_its_own_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The notify channel's warning is not the method's: an estate can have one
+    working and the other not, so a consumer must tell them apart by code."""
+    from sopuli.notify.registry import Notifier
+
+    missing = Notifier(
+        module="sopuli.notify.webhook",
+        extra="notify",
+        provides=frozenset({"a_module_nobody_has_installed"}),
+    )
+    monkeypatch.setattr("sopuli.config.notify.NOTIFIERS", {"webhook": missing})
+    webhook = {"url": {"env": "SOPULI_NOTIFY_WEBHOOK"}, "template": "{account} is ready"}
+    config = build_config(
+        {
+            "version": 1,
+            "delivery": {
+                "method": "vault_wrapped",
+                "vault_wrapped": {"ttl": "15m"},
+                "notify": {"method": "webhook", "webhook": webhook},
+            },
+        }
+    )
+
+    [warning] = [one for one in config.warnings if one.at == "delivery.notify.method"]
+    assert warning.code == NOTIFY_UNSERVICEABLE
 
 
 def test_a_file_with_no_delivery_carries_no_such_warning() -> None:

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from sopuli.config.codes import RELAXATION_DEFEATED
 from sopuli.output.document import Diagnostic
 from sopuli.output.palette import Role, paint
 from sopuli.settings import Layer, Resolved, ratchet_note, render_value
@@ -99,7 +100,7 @@ def ratchet_notes(resolved: Mapping[str, Resolved]) -> list[Diagnostic]:
     for name in sorted(resolved):
         note = ratchet_note(resolved[name])
         if note is not None:
-            notes.append(Diagnostic(level="warning", message=note))
+            notes.append(Diagnostic(level="warning", message=note, code=RELAXATION_DEFEATED))
     return notes
 
 

@@ -66,7 +66,7 @@ PREFIX = {"warning": "SOPULI-W", "error": "SOPULI-"}
 #: The highest number given so far in each series. A pull request that adds a
 #: code raises it here. A number is never reused, so deleting the highest row and
 #: its constant must fail, and without this the other checks would still pass.
-HIGHEST = {"warning": 33, "error": 20003}
+HIGHEST = {"warning": 39, "error": 20003}
 
 
 def _constants(pattern: re.Pattern[str]) -> dict[str, list[str]]:
@@ -224,16 +224,10 @@ def test_the_registry_describes_every_warning_in_the_table() -> None:
 #: site that gains its codes fails :func:`test_the_uncoded_list_is_current` until
 #: its line is removed here.
 UNCODED = {
-    "sopuli/config/loading.py::_delivery_warnings": (2, 797),
-    "sopuli/config/loading.py::_policy_warnings": (1, 797),
-    "sopuli/config/references.py::_warn_about_profile_names": (1, 797),
-    "sopuli/config/vault_env.py::_unplaceable_warning": (2, 797),
-    "sopuli/config/vault_layers.py::_merge_tls": (1, 797),
     "sopuli/cli.py::_preflight_diagnostics": (1, 798),
     "sopuli/cli.py::_rotate_estate": (1, 798),
     "sopuli/output/account_list_view.py::_warnings": (1, 798),
     "sopuli/output/apply_view.py::_warnings": (1, 798),
-    "sopuli/output/explain_view.py::ratchet_notes": (1, 798),
     "sopuli/output/generate_view.py::_warnings": (3, 798),
     "sopuli/output/status_view.py::_warnings": (1, 798),
 }

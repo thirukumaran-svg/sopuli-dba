@@ -72,6 +72,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
+from sopuli.config.codes import THIRD_PARTY_VARIABLE_UNAPPLIED
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import ConfigWarning
 from sopuli.settings import Contribution, Layer, Resolved, resolve
@@ -444,6 +445,7 @@ def _unplaceable_warning(
                 f"{DEFAULT_STORE_VARIABLE} -- write `defaults.vault`, or ignore this if "
                 f"the variable belongs to something else on this machine"
             ),
+            code=THIRD_PARTY_VARIABLE_UNAPPLIED,
         )
     named_by = "the environment" if active is None else active.location
     return ConfigWarning(
@@ -453,4 +455,5 @@ def _unplaceable_warning(
         ),
         at="",
         hint="declare it under `vaults:`, or correct the name",
+        code=THIRD_PARTY_VARIABLE_UNAPPLIED,
     )

@@ -65,6 +65,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
+from sopuli.config.codes import RELAXATION_DEFEATED
 from sopuli.config.errors import ROOT, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
 from sopuli.config.vault_env import (
@@ -270,6 +271,7 @@ def _merge_tls(
                     # words before the sentence says it again.
                     at="",
                     hint="invariant 10: a safety setting cannot be relaxed by any layer",
+                    code=RELAXATION_DEFEATED,
                 )
             )
     return VaultTls(**values), patched, settings, warnings

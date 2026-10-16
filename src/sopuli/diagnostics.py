@@ -7,8 +7,8 @@ machine-readable codes with a documented registry. This is that registry.
 ``03-json-output.md`` §3). The codes are one flat series, ``SOPULI-W001``
 upwards. The next code is the next free number, and a number is never reused.
 ``tests/test_warning_codes.py`` fails on two codes with one number, on a gap,
-and on a registry that disagrees with the document's table. The config layer's
-findings and a few others have no code yet (#797, #798).
+and on a registry that disagrees with the document's table. A few run warnings
+have no code yet (#798).
 
 For `doctor`, it is settled **when a finding gets a diagnostic at all**: one
 for what the exit code cannot tell you. An unreachable store fails the run, so
@@ -33,7 +33,15 @@ from types import MappingProxyType
 
 from sopuli.admin import Resolved
 from sopuli.clock import Skew, to_rfc3339
-from sopuli.config.references import UNVERIFIED_TRANSPORT
+from sopuli.config.codes import (
+    DELIVERY_UNSERVICEABLE,
+    NOTIFY_UNSERVICEABLE,
+    PROFILE_NAMED_AFTER_ENVIRONMENT,
+    RELAXATION_DEFEATED,
+    THIRD_PARTY_VARIABLE_UNAPPLIED,
+    UNREAD_POLICY_KEYS,
+    UNVERIFIED_TRANSPORT,
+)
 from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
 from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
@@ -452,12 +460,12 @@ CONNECTION_ENCRYPTION_UNKNOWN = "SOPULI-W032"
 #: the vault, because a refused compare-and-set means another writer.
 PROMOTION_FAILED = "SOPULI-W033"
 
-#: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
-#: the config layer, which cannot import this module (see the constant's own
-#: comment in :mod:`sopuli.config.references`), so the definition lives with the
-#: code that raises it and the registry below stays the one place that says what
-#: it means. Importing it here is also what puts it in this module's namespace,
-#: so ``from sopuli.diagnostics import UNVERIFIED_TRANSPORT`` reads the same as
+#: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
+#: rather than defined here. They are raised in the config layer, which cannot
+#: import this module, so they are defined in :mod:`sopuli.config.codes` and
+#: the registry below stays the one place that says what each means.
+#: Importing them here is also what puts them in this module's namespace, so
+#: ``from sopuli.diagnostics import UNVERIFIED_TRANSPORT`` reads the same as
 #: every other code.
 
 #: Every code this build can emit, and what each one means. The description is
@@ -708,6 +716,40 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "every target and promotes it, and a failed rollback is repeated with "
             "`--source previous --confirm`. Where the run then lost its lock, the message "
             "names no re-run: the run holding the lock finishes it."
+        ),
+        UNREAD_POLICY_KEYS: (
+            "A policy's `rotation:` or `verify:` block sets keys that no run reads. "
+            "They are parsed and validated, and every verb takes them from the command "
+            "line instead. One entry per block, naming the keys and the flag that sets "
+            "each one where there is a flag."
+        ),
+        DELIVERY_UNSERVICEABLE: (
+            "`delivery.method` names a method this build does not implement, so nothing "
+            "can hand a password over that way. The file is valid: `config validate` warns "
+            "and exits 0, and the verb that tries to deliver fails."
+        ),
+        NOTIFY_UNSERVICEABLE: (
+            "`delivery.notify.method` names a channel this build cannot send through: it "
+            "has no code for it, or its client is not installed. The message says which. "
+            "`account reset-password` refuses before the password changes, rather than "
+            "resetting without notifying."
+        ),
+        PROFILE_NAMED_AFTER_ENVIRONMENT: (
+            "A profile has the name of an environment that a target declares. "
+            "`--profile <name>` selects no targets: a profile changes how a run behaves, "
+            "not what it acts on."
+        ),
+        THIRD_PARTY_VARIABLE_UNAPPLIED: (
+            "A third-party store variable, such as `VAULT_ADDR`, is set and was not "
+            "applied, because this run has no default store to apply it to: no layer "
+            "names one, or the one named is not declared. The message says which. A "
+            "warning and not a refusal, because the variable may belong to something else "
+            "on this machine."
+        ),
+        RELAXATION_DEFEATED: (
+            "A layer asked to relax a safety setting, and the ratchet held (invariant 10). "
+            "The message names both ends: the layer that asked, and where the value that "
+            "held is set. Nothing failed, and the run uses the safer value."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "

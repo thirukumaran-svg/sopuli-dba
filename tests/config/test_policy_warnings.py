@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sopuli.config.codes import UNREAD_POLICY_KEYS
 from sopuli.config.loading import build_config
 
 
@@ -38,6 +39,7 @@ def test_each_block_warns_once_naming_its_keys() -> None:
     assert "`strategy` with `--strategy`" in str(rotation.hint)
     assert "`max_age_days` with `--max-age-days`" in str(rotation.hint)
     assert found["policies.app-standard.verify"].message == "`method` is parsed and not read"
+    assert {warning.code for warning in config.warnings} == {UNREAD_POLICY_KEYS}
 
 
 def test_a_key_no_flag_sets_says_so() -> None:
