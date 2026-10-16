@@ -592,6 +592,16 @@ scheduled `creds rotate --application acme` where somebody renamed the entry to
 success for a credential that stopped being rotated. Every other guardrail here
 is about doing too much; this one is about doing nothing and saying it went fine.
 
+**The tool refuses a label key that no target carries**, in the file
+([#819](../decisions/log.md#819)). A `--select` on the command line is not
+checked this way. The rule above is about a label's *value*: no
+target has `env: staging` today, and one may tomorrow. A *key* that no target in
+the estate has at all can match nothing until somebody adds that label. A group
+`match:`, an application or personal-account `targets: { match: … }`, or an
+override `where:` written with it would apply nowhere and say nothing. That is
+what a typo (`tenent:`) or another word for an account (`user:`) looks like. The
+estate is checked after expansion, so a label a target set attaches counts.
+
 Names are checked against the **unfiltered** estate, so a name that exists but
 was excluded by another selector is an empty run rather than a misspelling —
 those are different mistakes with different fixes.
@@ -2999,6 +3009,10 @@ notices until a rotation.
 ## 10. Validation rules worth enforcing early
 
 - unknown keys → error, not warning
+- a label key in a group `match:`, a `targets: { match: … }` or an override
+  `where:` that no target in the expanded estate carries → error, naming the
+  key and listing the keys the targets do carry (§2). A value that matches no
+  target is allowed
 - both top-level `accounts:` and `applications:` present → error
 - a secret ref that cannot produce **distinct refs for distinct accounts** → error.
   Concretely: more than one account declared, and neither `{account}`,

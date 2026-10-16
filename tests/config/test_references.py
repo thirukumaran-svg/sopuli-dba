@@ -258,6 +258,108 @@ def test_an_application_naming_an_undeclared_group_is_refused() -> None:
     assert "applications[0].targets.group" in rendered
 
 
+# ------------------------------------------ a label key nobody has (#819) ---
+
+LABELLED: dict[str, Any] = {**TARGET, "labels": {"env": "prod", "tenant": "alpha"}}
+
+
+@pytest.mark.parametrize(
+    ("sections", "at"),
+    [
+        ({"groups": {"alpha": {"match": {"tenent": "alpha"}}}}, "groups.alpha.match.tenent"),
+        (
+            {
+                "applications": [
+                    {"name": "acme", "accounts": ["a"], "targets": {"match": {"tenent": "alpha"}}}
+                ]
+            },
+            "applications[0].targets.match.tenent",
+        ),
+        (
+            {
+                "policies": POLICIES,
+                "applications": [
+                    {
+                        "name": "acme",
+                        "accounts": ["a"],
+                        "overrides": [{"where": {"tenent": "alpha"}, "policy": "app-standard"}],
+                    }
+                ],
+            },
+            "applications[0].overrides[0].where.tenent",
+        ),
+        (
+            {
+                "policies": POLICIES,
+                "accounts": ["a"],
+                "overrides": [{"where": {"tenent": "alpha"}, "policy": "app-standard"}],
+            },
+            "overrides[0].where.tenent",
+        ),
+        (
+            {
+                "personal_accounts": [
+                    {"accounts": ["acme_dev_alice"], "targets": {"match": {"tenent": "alpha"}}}
+                ]
+            },
+            "personal_accounts[0].targets.match.tenent",
+        ),
+    ],
+    ids=["group", "application", "override", "inline-override", "personal-account"],
+)
+def test_a_label_key_no_target_carries_is_refused(sections: dict[str, Any], at: str) -> None:
+    """A key no target has can match nothing, so the entry would apply nowhere
+    and say nothing. Each place a config matches labels is checked."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(targets=[LABELLED], **sections))
+
+    rendered = str(caught.value)
+    assert "no target in this estate carries the label 'tenent'" in rendered
+    assert at in rendered
+    assert "env, tenant" in (caught.value.hint or "")
+
+
+def test_an_estate_with_no_labels_says_to_add_them() -> None:
+    """A fresh config with an unlabelled target and a group: the hint says what
+    to do, rather than listing no keys."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(targets=[TARGET], groups=GROUPS))
+
+    assert "add `labels:` to the targets" in (caught.value.hint or "")
+
+
+def test_a_label_value_that_matches_nothing_is_still_allowed() -> None:
+    """§2: the estate changes underneath a label, so a value with no target
+    today is a true answer, not a typo."""
+    config = build_config(
+        document(targets=[LABELLED], groups={"beta": {"match": {"tenant": "beta"}}})
+    )
+
+    assert [group.name for group in config.groups] == ["beta"]
+
+
+def test_a_dimension_label_counts_as_carried() -> None:
+    """A target set attaches its dimension as a label, so `env` is carried
+    though no target writes it."""
+    config = build_config(
+        document(
+            vaults=VAULTS,
+            target_sets={
+                "appdb": {
+                    "type": "oracle",
+                    "name": "appdb-{env}",
+                    "dsn": "{host}:1521/x",
+                    "vault": "vault-dev",
+                    "for_each": {"env": {"dev": {"host": "db.example.com"}}},
+                }
+            },
+            groups={"dev": {"match": {"env": "dev"}}},
+        )
+    )
+
+    assert [group.name for group in config.groups] == ["dev"]
+
+
 def test_defaults_naming_an_undeclared_profile_is_refused() -> None:
     """§5: selecting a profile that does not exist is an error rather than a
     silent fallback, and that has to hold for the one named in the file too."""
