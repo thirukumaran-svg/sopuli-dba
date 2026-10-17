@@ -212,12 +212,64 @@ what it was used for during the Actions incident in #233.
   generates by default from v1.11. It is a signed statement, logged in
   Sigstore's transparency log, that the file was built by this workflow in this
   repository at this commit. `build` and `publish` are separate jobs so that it
-  vouches for exactly what `build` handed over. How to verify a release will be
-  written here from the first real one (#547), not predicted.
-- Outside the repository, and needed once before the first release: the `pypi`
-  environment with required reviewers, and a PyPI trusted publisher with owner
-  `villebase`, repository `sopuli-dba`, workflow `release-please.yml` and
-  environment `pypi`.
+  vouches for exactly what `build` handed over.
+- **Check a release once it is on PyPI.** Set `V` to the version being checked.
+  The output shown is from 0.75.0, the first published release. In a fresh
+  virtual environment, install it the way the README says, and check the version:
+
+  ```bash
+  V=0.75.0
+  python -m venv smoke && . smoke/bin/activate    # smoke\Scripts\activate on Windows
+  pip install "sopuli-dba[oracle,hashicorp]==$V"
+  sopuli --version
+  ```
+  ```
+  sopuli, version 0.75.0
+  ```
+
+  Then ask PyPI's integrity API who published each of the two files. Each must
+  name this repository, workflow and environment:
+
+  ```bash
+  for f in sopuli_dba-$V-py3-none-any.whl sopuli_dba-$V.tar.gz; do
+    curl -s -H "Accept: application/vnd.pypi.integrity.v1+json" \
+      "https://pypi.org/integrity/sopuli-dba/$V/$f/provenance" |
+      python -c "import json, sys; print(sys.argv[1], [b['publisher'] for b in json.load(sys.stdin)['attestation_bundles']])" "$f"
+  done
+  ```
+  ```
+  sopuli_dba-0.75.0-py3-none-any.whl [{'environment': 'pypi', 'kind': 'GitHub', 'repository': 'villebase/sopuli-dba', 'workflow': 'release-please.yml'}]
+  sopuli_dba-0.75.0.tar.gz [{'environment': 'pypi', 'kind': 'GitHub', 'repository': 'villebase/sopuli-dba', 'workflow': 'release-please.yml'}]
+  ```
+
+  Then verify each file's attestation against Sigstore with
+  [`pypi-attestations`](https://pypi.org/project/pypi-attestations/), which
+  downloads the file and its provenance from PyPI and checks both. Install it in
+  a virtual environment of its own, so its dependencies stay out of the one
+  that tests the release:
+
+  ```bash
+  python -m venv verify && . verify/bin/activate  # verify\Scripts\activate on Windows
+  pip install pypi-attestations
+  for f in sopuli_dba-$V-py3-none-any.whl sopuli_dba-$V.tar.gz; do
+    pypi-attestations verify pypi --repository https://github.com/villebase/sopuli-dba "pypi:$f"
+  done
+  ```
+  ```
+  OK: sopuli_dba-0.75.0-py3-none-any.whl
+  OK: sopuli_dba-0.75.0.tar.gz
+  ```
+
+  **Anything other than `OK` for either file, or a publisher other than this
+  workflow and environment, is a security incident**, not a failed release: a
+  file reached PyPI outside the trusted path. Yanking alone is not enough,
+  because a yanked file still installs for anyone who pins it. Delete the file
+  or the release on PyPI. Check the trusted publishers and the project's owners
+  on PyPI, and the `pypi` environment's reviewers here. Then open a draft
+  security advisory, as `SECURITY.md` describes for a reported vulnerability.
+- Outside the repository, and set up once: the `pypi` environment with required
+  reviewers, and a PyPI trusted publisher with owner `villebase`, repository
+  `sopuli-dba`, workflow `release-please.yml` and environment `pypi`.
 - Every action in every workflow is pinned to a commit SHA, with the tag in a
   comment beside it.
 - No manual tagging.
