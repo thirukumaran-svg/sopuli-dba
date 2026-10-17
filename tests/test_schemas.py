@@ -39,6 +39,7 @@ SRC_DIR = Path(__file__).resolve().parents[1] / "src" / "sopuli"
 #: they have to stay true as the schemas evolve.
 SAMPLES = {
     "example-creds-check-drift.json": f"sopuli-run-{SCHEMA_VERSION}.schema.json",
+    "example-creds-status-rollover.json": f"sopuli-run-{SCHEMA_VERSION}.schema.json",
 }
 
 

@@ -301,8 +301,11 @@ def test_config_files_are_resolved_not_stored_as_typed(tmp_path: Path) -> None:
     assert Path(found[0]).is_absolute()
 
 
-def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> None:
-    """The example shows only fields a run can emit.
+@pytest.mark.parametrize(
+    "name", ["example-creds-check-drift.json", "example-creds-status-rollover.json"]
+)
+def test_the_committed_example_carries_no_field_the_producer_cannot_write(name: str) -> None:
+    """Each example shows only fields a run can emit.
 
     ``tests/test_schemas.py`` validates the example against the schema, and it
     passes whatever a run produces -- conformance is not the claim *a run
@@ -321,11 +324,7 @@ def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> N
     every_field.options = {"output": Option(value="json", source="cli")}
     producible = set(every_field.finish(ExitCode.SUCCESS).to_dict()["invocation"])
 
-    example = json.loads(
-        (REPO_ROOT / "docs" / "schemas" / "example-creds-check-drift.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    example = json.loads((REPO_ROOT / "docs" / "schemas" / name).read_text(encoding="utf-8"))
     assert set(example["invocation"]) <= producible
 
 

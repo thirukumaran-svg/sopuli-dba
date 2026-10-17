@@ -1,0 +1,157 @@
+{
+  "schema_version": "1.41",
+  "tool": {
+    "name": "sopuli",
+    "version": "0.73.0"
+  },
+  "command": "creds.status",
+  "invocation": {
+    "correlation_id": "284aa728-f216-407e-b376-f737a4e0b513",
+    "started_at": "2026-10-17T15:58:04.167238Z",
+    "finished_at": "2026-10-17T15:58:05.271304Z",
+    "duration_ms": 1104,
+    "actor": {
+      "os_user": "svc_sopuli",
+      "host": "dba-runner-01.example.com"
+    },
+    "dry_run": false,
+    "config_files": [
+      "/etc/sopuli/config.yaml"
+    ],
+    "options": {
+      "output": {
+        "value": "json",
+        "source": "cli",
+        "source_detail": "--output (verb)"
+      },
+      "vault": {
+        "value": "vault-dev",
+        "source": "defaults",
+        "source_detail": "defaults.vault"
+      }
+    }
+  },
+  "summary": {
+    "total": 2,
+    "ok": 1,
+    "changed": 0,
+    "failed": 0,
+    "unchanged": 2,
+    "unverifiable": 1,
+    "by_state": {
+      "ROLLOVER_ACTIVE": 1,
+      "UNVERIFIABLE": 1
+    }
+  },
+  "exit_code": 0,
+  "diagnostics": [
+    {
+      "level": "warning",
+      "message": "free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance",
+      "code": "SOPULI-W022",
+      "target": "free-pdb"
+    }
+  ],
+  "plan": {
+    "units": [
+      {
+        "account": "acme_app_user",
+        "target": "free-pdb",
+        "intent": [
+          "none"
+        ],
+        "secret": {
+          "vault": "vault-dev",
+          "path": "acme/dev/acme",
+          "field": "DB_CREDENTIALS",
+          "pointer": "/acme_app_user"
+        }
+      },
+      {
+        "account": "acme_batch_user",
+        "target": "free-pdb",
+        "intent": [
+          "none"
+        ],
+        "secret": {
+          "vault": "vault-dev",
+          "path": "acme/dev/acme",
+          "field": "DB_CREDENTIALS",
+          "pointer": "/acme_batch_user"
+        }
+      }
+    ],
+    "blast_radius": {
+      "targets": 1,
+      "accounts": 2,
+      "environments": [
+        "dev"
+      ]
+    },
+    "confirmation_required": false,
+    "shared_secrets": [
+      {
+        "secret": {
+          "vault": "vault-dev",
+          "path": "acme/dev/acme"
+        },
+        "targets": [
+          "free-pdb"
+        ],
+        "accounts": [
+          "acme_app_user",
+          "acme_batch_user"
+        ]
+      }
+    ]
+  },
+  "results": [
+    {
+      "account": "acme_app_user",
+      "target": "free-pdb",
+      "state": "UNVERIFIABLE",
+      "changed": false,
+      "actions": [
+        {
+          "kind": "none",
+          "applied": false,
+          "detail": "no login was attempted; `sopuli creds check` compares"
+        }
+      ],
+      "password_age_days": 0.0,
+      "rollover": {
+        "active": false,
+        "profile_rollover_time": "0"
+      },
+      "duration_ms": 57,
+      "warnings": [
+        {
+          "level": "warning",
+          "message": "the password is in its grace period: it still works, and expires 2026-10-24T15:57:51Z (in 6d23h)",
+          "code": "SOPULI-W013",
+          "target": "free-pdb",
+          "account": "acme_app_user"
+        }
+      ]
+    },
+    {
+      "account": "acme_batch_user",
+      "target": "free-pdb",
+      "state": "ROLLOVER_ACTIVE",
+      "changed": false,
+      "actions": [
+        {
+          "kind": "none",
+          "applied": false,
+          "detail": "a rollover window is open, 10m left; both passwords authenticate"
+        }
+      ],
+      "password_age_days": 0.0,
+      "rollover": {
+        "active": true,
+        "profile_rollover_time": ".0416"
+      },
+      "duration_ms": 47
+    }
+  ]
+}
