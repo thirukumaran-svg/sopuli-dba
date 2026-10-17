@@ -9,6 +9,10 @@ This document specifies `personal_accounts:`, `sopuli account reset-password`,
 delivery methods; §6.2 lists the methods that are not built yet. §9 lists the
 open questions.
 
+**These commands are experimental in the alpha.** They are the newest part of
+the tool, and the decision on the seen reset's rollover refusal is still open
+(open: #541), so they may change more than the application-credential commands.
+
 ---
 
 ## 1. Summary

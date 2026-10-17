@@ -6,7 +6,7 @@ specification. [CONTRIBUTING.md](../CONTRIBUTING.md#how-this-project-is-built-an
 explains why they record rejected options and name the issue behind each
 decision.
 
-The project is pre-alpha. Each use-case document says which parts of it are
+The project is alpha. Each use-case document says which parts of it are
 built. [measurements.md](measurements.md) says which script in `sql/oracle/` ran
 on which Oracle release, and what it showed.
 

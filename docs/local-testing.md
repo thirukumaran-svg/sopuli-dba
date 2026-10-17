@@ -688,6 +688,8 @@ tool hands a new password to the person and keeps no copy.
 [`use-cases/uc-02-personal-account-passwords.md`](use-cases/uc-02-personal-account-passwords.md)
 specifies these commands.
 
+These commands are experimental in the alpha.
+
 ### `account list`
 
 `list` shows the accounts `personal_accounts:` declares, as the database sees

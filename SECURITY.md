@@ -7,11 +7,10 @@ before anything is fixed.
 
 Report it privately, by either route:
 
-- **Email `sopuli-dba@proton.me`.** This is the address to use today, and it is
-  the one that works whatever state the repository is in.
 - **GitHub's private vulnerability reporting** — on the repository's *Security*
   tab, choose *Report a vulnerability*. This creates a private advisory only the
-  maintainers can see. It is enabled once the repository is public.
+  maintainers can see.
+- **Email `sopuli-dba@proton.me`**, if you would rather not use GitHub.
 
 There is no PGP key. If you need one to send the report, say so in a first
 message with no details in it and one will be arranged.
@@ -46,10 +45,10 @@ arrive. Send it again.
 
 ## Which versions are supported
 
-**None, formally.** This project is pre-alpha and is not published to PyPI.
-There are no maintained release branches, so a fix lands on `main` and in the
-next release. Report anything you find against `main` or against the most recent
-release, and it will be looked at.
+**None, formally.** This project is alpha. There are no maintained release
+branches, so a fix lands on `main` and in the next release. Report anything you
+find against `main` or against the most recent release, and it will be looked
+at.
 
 That will change when there is a stable release; this section is where it will
 say so.

@@ -103,20 +103,31 @@ see [`docs/scenarios/kubernetes-eso.md`](https://github.com/villebase/sopuli-dba
 
 ## Status
 
-**Pre-alpha. Do not point this at a production database yet.**
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/villebase/sopuli-dba/badge)](https://scorecard.dev/viewer/?uri=github.com/villebase/sopuli-dba)
+
+**Alpha. Do not point this at a production database.**
+
+Alpha means you can install it and run the application-credential commands
+(UC-1) against a test database, and anything that goes wrong is a bug, not an
+unfinished part. It promises three things:
+
+- **Bugs are expected**, and production use is still off-limits.
+- **Configuration and JSON output may still change**, but every change is in
+  [the changelog](https://github.com/villebase/sopuli-dba/blob/main/CHANGELOG.md). The JSON output's schemas are versioned, so a
+  change is never silent.
+- **What is not covered is named** below, not left for you to discover.
 
 | | |
 |---|---|
-| **Install** | Nothing is published to PyPI yet — you install from a git checkout. `sopuli --version` and `sopuli about` report the installed distribution's version |
-| **Databases** | Oracle only. CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. 12.1 is not tested |
+| **Install** | `pip install "sopuli-dba[oracle,hashicorp]"`. `sopuli --version` and `sopuli about` report the installed version |
+| **Databases** | Oracle only. CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI |
+| **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
+| **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, and one of their decisions, about the seen reset, is still open ([#541](https://github.com/villebase/sopuli-dba/issues/541)), so they may change more than the rest |
 
 If you want the full design picture — every decision, and every question that is
 still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md).
-
-*(Build-status and coverage badges will go here once the repository is public and
-CI runs on it. There are none yet, and a fake one would be worse than none.)*
 
 ---
 
@@ -188,12 +199,12 @@ sopuli: vault "oci-prod" declares type "oci", but this build has no oci backend 
 
 The rule and what it costs: [ADR-006](https://github.com/villebase/sopuli-dba/blob/main/docs/decisions/adr-006-optional-dependencies.md).
 
-> **Status: pre-alpha.** The extras above are declared in `pyproject.toml` and
+> **Status: alpha.** The extras above are declared in `pyproject.toml` and
 > the registry behind them resolves a backend on first use.
 > **`hashicorp` is the one secret store that exists** — KV v2 and KV v1, with
 > token, AppRole, Kubernetes and userpass auth. Every command that reaches a
 > store reaches that one. `oci`, `file` and `keyring` are accepted in a config
-> and report that this build has no module for them. Nothing is on PyPI yet.
+> and report that this build has no module for them.
 
 Step-by-step, including your first config file:
 [`docs/getting-started.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md).
@@ -202,7 +213,7 @@ Step-by-step, including your first config file:
 
 ## Is this safe to use?
 
-The honest answer for today is in the status box above: it is pre-alpha, so treat
+The honest answer for today is in the status box above: it is alpha, so treat
 it as something to try against a test database first. What follows is what the
 tool does to protect you once you do trust it with something that matters.
 

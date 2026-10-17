@@ -11,7 +11,7 @@ It is written in plain language on purpose. The precise versions live in
 §8. Nothing here is new behaviour; it is the same behaviour, explained for a
 reader who is outside the project.
 
-A note on the current state before anything else: this is pre-alpha software.
+A note on the current state before anything else: this is alpha software.
 Only Oracle is supported, and only HashiCorp Vault is supported as the secret
 store. Try it against a test database first.
 

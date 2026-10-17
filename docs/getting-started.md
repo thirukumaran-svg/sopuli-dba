@@ -6,7 +6,7 @@ Oracle and it does **not** assume you have installed a Python program before.
 By the end you will have installed the tool, written a config file, checked that
 the file is valid, and previewed a change without making one.
 
-**Do this against a test database.** The tool is pre-alpha, and the last step of
+**Do this against a test database.** The tool is alpha, and the last step of
 this guide is deliberately a preview rather than a change.
 
 What you need before you start:
@@ -28,10 +28,8 @@ those runs printed.
 That version is a **record of what the capture printed**, not a claim about what
 this build is at — it is supposed to name an old release, and it moves when the
 samples are re-captured rather than when a version is cut. Do not "correct" it to
-the current number: `pyproject.toml` owns that number, and `sopuli --version`
-reports the *installed distribution's* version, which under an editable install
-can itself lag the tree — see [`local-testing.md`](local-testing.md) §2, which
-keeps the same kind of per-sample note.
+the current number: `pyproject.toml` owns that number.
+[`local-testing.md`](local-testing.md) §2 keeps the same kind of per-sample note.
 
 ---
 
@@ -90,9 +88,11 @@ are in [`../test/README.md`](../test/README.md).
 
 A *virtual environment* is a private folder holding one project's Python
 packages, so installing something for this tool cannot disturb anything else on
-the machine. Making one is two commands, and you make it wherever you like:
+the machine. Make it outside the repository you cloned in section 1, for example
+in your home folder:
 
 ```bash
+cd ~
 python -m venv .venv
 ```
 
@@ -110,16 +110,13 @@ You will need to activate it again in every new terminal window.
 
 ### 2b. Install sopuli-dba
 
-`pip` is the program that installs Python packages. Nothing is published to PyPI
-— the public index `pip` normally downloads from — yet, so you install from a
-copy of the repository:
+`pip` is the program that installs Python packages. It downloads them from
+PyPI, the public package index:
 
 ```bash
-git clone https://github.com/villebase/sopuli-dba.git
-cd sopuli-dba
-# Install this checkout, plus the two optional parts named in the brackets:
+# The tool, plus the two optional parts named in the brackets:
 # the Oracle driver and the HashiCorp Vault client.
-pip install ".[oracle,hashicorp]"
+pip install "sopuli-dba[oracle,hashicorp]"
 ```
 
 Those names in square brackets are *extras* — Python packaging's word for an
@@ -128,13 +125,10 @@ nothing that talks to a vendor unless you ask for it, so a site with no OCI neve
 inherits the OCI SDK's version constraints. The reasoning is in
 [ADR-006](decisions/adr-006-optional-dependencies.md).
 
-Check it arrived:
+Check it arrived. It prints the version you installed:
 
 ```bash
 sopuli --version
-```
-```
-sopuli, version 0.58.0
 ```
 
 ### 2c. Install Oracle Instant Client

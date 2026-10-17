@@ -462,7 +462,9 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 ## 6. Release gates
 
 These are not tests that may be skipped. A release does not happen if any of
-them is red.
+them is red. Every release runs gates 1, 3, 5 and 6, and gate 4 on the tier-1
+image. The runs on other Oracle releases, for gates 2 and 4, are not repeated
+for every release: gates 2 and 4 below say when they are. Decided in #547.
 
 1. **Redaction.** Run the full suite, then search every artefact (stdout,
    stderr, log files, JSON output, audit records) for every generated password.
@@ -481,7 +483,11 @@ them is red.
    Search the JSON artefacts of a `policy sample` run for the values it printed.
    There must be no hits.
 2. **Password leakage into Oracle.** Run `sql/oracle/02_password_leak_probe.sql`
-   on each supported major release. It plants one canary per execution path:
+   on each supported major release. A release does not run it again on each
+   one: it cites the runs recorded in [`../measurements.md`](../measurements.md),
+   by release and date. A recorded run stands for its release until the probe
+   changes, or the statement text the tool sends changes. Then the probe runs
+   again on each release. It plants one canary per execution path:
    `CREATE USER` from the client, `ALTER USER` from the client, `EXECUTE
    IMMEDIATE` with the password as a literal in the block, and `EXECUTE
    IMMEDIATE` with the password assembled at runtime. It then searches every
@@ -534,9 +540,13 @@ them is red.
    validate, a test asserts that the config schema is the one the config layer
    generates, and `01-configuration.md`'s worked example is validated against
    it.
-4. **Lockout.** The lockout regression test passes on every Oracle release in the
-   matrix. A tool that locks production accounts while it checks them is worse
-   than no tool.
+4. **Lockout.** The lockout regression test in `tests/driver/test_oracle_verify.py`
+   passes. A tool that locks production accounts while it checks them is worse
+   than no tool. Every release runs it in tier 1, on the 26ai image. It runs on
+   the other releases in the matrix, on the maintainer images, when the
+   verification path or its lockout guard changes. A tier-1 run on another image
+   is not recorded in `measurements.md`, so the release that does it says so in
+   its PR.
 5. **Idempotency.** Every **convergent** command, run twice anywhere, reports
    `changed: false` the second time.
 
