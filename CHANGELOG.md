@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.74.0](https://github.com/villebase/sopuli-dba/compare/v0.73.0...v0.74.0) (2026-10-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** `profiles.<name>.verify`, `profiles.<name>.rotation`, `policies.<name>.verify` and `policies.<name>.rotation` are refused. Delete them, and pass --method, --lockout-margin, --strategy or --max-age-days on the command line instead.
+
+### Features
+
+* **config:** give the config layer's warnings their codes ([#797](https://github.com/villebase/sopuli-dba/issues/797)) ([#821](https://github.com/villebase/sopuli-dba/issues/821)) ([6c44061](https://github.com/villebase/sopuli-dba/commit/6c44061288b3a65ca6c6def5f8047dcf28c35dda))
+* **config:** refuse a label key that no target carries ([#819](https://github.com/villebase/sopuli-dba/issues/819)) ([#836](https://github.com/villebase/sopuli-dba/issues/836)) ([0457d88](https://github.com/villebase/sopuli-dba/commit/0457d8844ddfda1e1697f263dc18ff4c8cbe163b))
+* **config:** refuse one shared password under two policies ([#830](https://github.com/villebase/sopuli-dba/issues/830)) ([#840](https://github.com/villebase/sopuli-dba/issues/840)) ([21c5938](https://github.com/villebase/sopuli-dba/commit/21c5938d8f7a32becc7ab6a042369abb74416b14))
+* **config:** refuse per-account settings in an application entry ([#640](https://github.com/villebase/sopuli-dba/issues/640)) ([#818](https://github.com/villebase/sopuli-dba/issues/818)) ([e5b9987](https://github.com/villebase/sopuli-dba/commit/e5b9987c3457e1cffc341a040aa48361265c21ad))
+* **config:** refuse two accounts on one password across entries ([#841](https://github.com/villebase/sopuli-dba/issues/841)) ([#843](https://github.com/villebase/sopuli-dba/issues/843)) ([f83f7c7](https://github.com/villebase/sopuli-dba/commit/f83f7c798f78040c6e29a1ab7ce97a2be0e35bc1))
+* **config:** remove the unread verify: and rotation: blocks ([#787](https://github.com/villebase/sopuli-dba/issues/787)) ([#827](https://github.com/villebase/sopuli-dba/issues/827)) ([491497f](https://github.com/villebase/sopuli-dba/commit/491497f8a90e05c3ea6939d336f859b90c72fbfa))
+* **creds:** refuse to stage over an existing pending ([#804](https://github.com/villebase/sopuli-dba/issues/804)) ([#808](https://github.com/villebase/sopuli-dba/issues/808)) ([88d0fe4](https://github.com/villebase/sopuli-dba/commit/88d0fe45438cde5a67b355259c5f7fc14bb110d9))
+* **doctor:** decide H10, and report the audit roles as over-granted ([#591](https://github.com/villebase/sopuli-dba/issues/591)) ([#810](https://github.com/villebase/sopuli-dba/issues/810)) ([5640305](https://github.com/villebase/sopuli-dba/commit/56403054fdf77a69330db884da8a7ab409350ef1))
+* **errors:** give three config errors their codes ([#801](https://github.com/villebase/sopuli-dba/issues/801)) ([#823](https://github.com/villebase/sopuli-dba/issues/823)) ([d06be5d](https://github.com/villebase/sopuli-dba/commit/d06be5db531a876d30640ac43159b7b00e6b6029))
+* **output:** give the remaining run warnings their codes ([#798](https://github.com/villebase/sopuli-dba/issues/798)) ([#824](https://github.com/villebase/sopuli-dba/issues/824)) ([5959bf6](https://github.com/villebase/sopuli-dba/commit/5959bf627113b5d14c7a42c1b6b60232212baba2))
+* **output:** remove admin.install from the run schema's command enum ([#655](https://github.com/villebase/sopuli-dba/issues/655)) ([#806](https://github.com/villebase/sopuli-dba/issues/806)) ([6921dad](https://github.com/villebase/sopuli-dba/commit/6921daddf7faa7b1f02703435a13ff272aacad7a))
+* **reset:** record whether the database audits the DBA's routes ([#591](https://github.com/villebase/sopuli-dba/issues/591)) ([#816](https://github.com/villebase/sopuli-dba/issues/816)) ([2b12890](https://github.com/villebase/sopuli-dba/commit/2b128904001c0de0cbd14368057a6c179bbad787))
+
+
+### Bug Fixes
+
+* **generate:** draw a password once, however many targets share it ([#830](https://github.com/villebase/sopuli-dba/issues/830)) ([#842](https://github.com/villebase/sopuli-dba/issues/842)) ([f138ec1](https://github.com/villebase/sopuli-dba/commit/f138ec1249f99462b6035022a10e3729cb37ff86))
+* keep a library's message out of output where it can quote a secret ([#785](https://github.com/villebase/sopuli-dba/issues/785)) ([#794](https://github.com/villebase/sopuli-dba/issues/794)) ([20deca8](https://github.com/villebase/sopuli-dba/commit/20deca8d4025591eaa5e8adcfb83dc8e9c32bf1e))
+* **oracle:** give a COMMON install audit policies that record in its PDBs ([#812](https://github.com/villebase/sopuli-dba/issues/812)) ([#838](https://github.com/villebase/sopuli-dba/issues/838)) ([1483c95](https://github.com/villebase/sopuli-dba/commit/1483c95d635fd8260ba17ca6a43a576671f4cf85))
+* **oracle:** map the codes for a lost session and a starting database ([#775](https://github.com/villebase/sopuli-dba/issues/775)) ([#844](https://github.com/villebase/sopuli-dba/issues/844)) ([b015fef](https://github.com/villebase/sopuli-dba/commit/b015fef6f58c1c608230609d2884d2b8be980b5b))
+* **output:** say why a run exits 4 when its promotion write fails ([#805](https://github.com/villebase/sopuli-dba/issues/805)) ([#822](https://github.com/villebase/sopuli-dba/issues/822)) ([343e7ca](https://github.com/villebase/sopuli-dba/commit/343e7ca8defb2835a2157557f182f08cd99cc655))
+* scrub the password from a refusal that quotes it ([#786](https://github.com/villebase/sopuli-dba/issues/786)) ([#791](https://github.com/villebase/sopuli-dba/issues/791)) ([58d9c1a](https://github.com/villebase/sopuli-dba/commit/58d9c1a3bf523aae06546e1628404d27cadae61e))
+
 ## [0.73.0](https://github.com/villebase/sopuli-dba/compare/v0.72.0...v0.73.0) (2026-10-14)
 
 
