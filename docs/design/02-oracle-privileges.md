@@ -1316,6 +1316,7 @@ the design as it is then.
 | `sql/oracle/11_proxy_connect_probe.sql` | whether `ALTER USER` alone can grant `CONNECT THROUGH` and connect as another account, and what that leaves in the audit trail |
 | `sql/oracle/12_connection_encryption_probe.sql` | what a session can read about whether its own connection is encrypted, with and without a grant (§2) |
 | `sql/oracle/13_audit_coverage_probe.sql` | what a service account can read about the enabled audit policies, and what each way of enabling a policy records of the proxy route (§2, §5) |
+| `sql/oracle/14_session_loss_probe.py` | the code the client raises when a held session is lost to a closed PDB or a CDB shutdown, and when a logon meets a CDB that is starting (UC-1 §6.4) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

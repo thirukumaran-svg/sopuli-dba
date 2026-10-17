@@ -96,6 +96,9 @@ def test_the_table_covers_every_row_uc1_names() -> None:
         "ORA-12541",
         "ORA-01109",
         "ORA-12514",
+        "DPY-4011",
+        "ORA-12528",
+        "ORA-01033",
         "ORA-28040",
         "ORA-28759",
         "ORA-28768",
@@ -250,7 +253,7 @@ def test_only_a_plainly_transient_failure_is_marked_retryable() -> None:
     assert not classify("ORA-01017", SERVER).retryable
 
 
-@pytest.mark.parametrize("code", ["ORA-12170", "ORA-03113", "ORA-99999", "DPY-4011", ""])
+@pytest.mark.parametrize("code", ["ORA-12170", "ORA-03113", "ORA-99999", "DPY-4005", ""])
 def test_retryable_is_none_where_no_row_decided_it(code: str) -> None:
     """#774: a family fallback places a code but says nothing about whether it
     clears, and an error with no code was not classified at all. `None` keeps
@@ -274,6 +277,53 @@ def test_a_closed_pdb_is_connectivity_and_says_so(code: str) -> None:
     assert found.hint is not None
     assert "closed" in found.hint
     assert not found.regenerate
+
+
+#: The message python-oracledb 26.0.0 raised in thick mode when a held session
+#: was lost (14_session_loss_probe.py SL1), as the probe printed it.
+SESSION_LOST = (
+    "DPY-4011: the database or network closed the connection\n"
+    "DPI-1080: connection was closed by ORA-03113\n"
+    "ORA-03113: end-of-file on communication channel"
+)
+
+
+def test_a_lost_session_is_connectivity_and_says_why_it_may_have_gone() -> None:
+    """#775: a PDB closed, or the CDB shut down, under a held session. The code
+    read is DPY-4011, not the ORA-03113 inside its message, and without a row it
+    fell to the client-library family with no hint."""
+    found = classify("DPY-4011", SESSION_LOST)
+
+    assert found.kind == UNREACHABLE
+    assert found.category == "connectivity"
+    assert found.exit_code == ExitCode.FAILURE
+    assert found.hint is not None
+    assert "closed" in found.hint
+    assert "shut down" in found.hint
+    assert "network" in found.hint
+    assert "creds apply" not in found.hint, "every verb meets it, not only apply"
+    assert found.retryable is False
+    assert found.message == SESSION_LOST
+
+
+@pytest.mark.parametrize("code", ["ORA-12528", "ORA-01033"])
+def test_a_database_starting_is_connectivity_and_retryable(code: str) -> None:
+    """#775: a logon while the CDB starts, in NOMOUNT (ORA-12528) or MOUNT
+    (ORA-01033). Both pass once it opens."""
+    found = classify(code, f"{code}: failure")
+
+    assert found.kind == UNREACHABLE
+    assert found.category == "connectivity"
+    assert found.exit_code == ExitCode.FAILURE
+    assert found.retryable is True
+    assert found.hint is not None
+    assert "open" in found.hint
+
+
+def test_codes_no_step_produced_stay_unmapped() -> None:
+    """#775 maps only measured codes. ORA-01034 and ORA-01089 were never
+    produced, and ORA-03113 arrives inside DPY-4011."""
+    assert not {"ORA-00028", "ORA-03113", "ORA-03135", "ORA-01034", "ORA-01089"} & set(RULES)
 
 
 @pytest.mark.parametrize("code", ["ORA-28759", "ORA-28768"])
