@@ -2318,3 +2318,33 @@ the register.
   - Draw one value that satisfies every policy. It cannot work when the
     policies disagree on an exact length, so that case would still need a
     refusal.
+
+## #841
+
+- **Decided:** 2026-10-17, #841
+- **Question:** `01-configuration.md` §10 refuses one entry whose ref gives two
+  accounts one ref. Two entries can still put two accounts on the same field
+  and pointer, or on places where one contains the other. Refuse that too?
+- **Decision:** Refuse it at load with exit 9, before the repository goes
+  public, on every store, for the same place and for nested places. The error
+  names both accounts, where they are declared, and the refs. It runs before
+  the stage-collision rule. Where one store comes only from a profile or
+  `SOPULI_VAULT`, the file cannot show the pair. `generate.draw_once` then
+  draws each account its own value, and `generate.group` refuses a write
+  that carries two values for one password, before anything is written.
+- **Why:** Two accounts on one field are one password for two principals. The
+  second write overwrites the first, and the application that reads the first is
+  locked out at the next rotation, which is the reason
+  `01-configuration.md` §10 gives for the in-entry rule.
+  Where staging is emulated, the stage-collision rule already refused such a
+  file, with a hint about a bare `#{account}` that did not fit. Where a store
+  stages natively, as OCI does, nothing refused it. A config that loads today
+  on such a store stops loading, which is cheap only before anyone outside
+  uses the tool.
+- **Rejected:**
+  - Refuse the pair in `generate.draw_once`, once the run knows every store.
+    It saw only the bindings the run's selectors kept, so a selector could
+    remove the pair it was there to catch, as #830 found for the policy rule.
+  - Widen the in-entry rule to look across entries. It reads the ref template,
+    not the rendered refs, so it cannot tell when two templates meet on one
+    field. The bindings can.

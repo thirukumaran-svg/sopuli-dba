@@ -71,9 +71,118 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
         at = ROOT if application.is_inline else _APPLICATIONS.index(index)
         where[application.name] = at
         bindings.extend(_bind(config, application, at=at))
+    # Two accounts on one password first: where staging is emulated they would
+    # also collide in `pending`, and this message names the actual fault.
+    _check_one_account_per_password(bindings, where=where)
     _check_stages_do_not_collide(bindings, config, where=where)
     _check_one_policy_per_password(bindings, where=where)
     return tuple(bindings)
+
+
+def _check_one_account_per_password(
+    bindings: Sequence[Binding], *, where: Mapping[str | None, KeyPath]
+) -> None:
+    """No two accounts resolve to one password, or to places that overlap.
+
+    §10 refuses an entry whose ref cannot give its accounts distinct refs
+    (``applications._require_distinguishable_accounts``). That rule sees one
+    entry. Two entries can still put two accounts on the same field and pointer
+    in the same document, for example by writing one literal ref in both. Then
+    `creds generate` writes both passwords into one field, the last one wins, and
+    one account's application reads the other account's password. The second
+    rotation locks the first out.
+
+    **Overlapping is the same fault.** A place is the field, then the pointer's
+    segments; a ref with no field is the whole document. Where one account's
+    place contains the other's, as ``apps/acme#DB`` contains
+    ``apps/acme#DB/acme_api_user``, writing the first replaces the object that
+    holds the second.
+
+    It is about the password, not the stage. Where staging is emulated,
+    ``_check_stages_do_not_collide`` would also refuse the file, because both
+    accounts stage into one key in ``pending``, but its hint is about a bare
+    ``#{account}``, which is a different mistake. So this runs first. Where a
+    store stages natively, as OCI does, that rule does not apply and only this
+    one refuses the file (decided in #841).
+
+    **One account in two nested places is the same fault too.** An override or
+    a second entry can give one account ``#DB`` on one target and
+    ``#DB/acme_web_user`` on another. Those are two values, and writing one
+    replaces the other. One account in one place is a shared password, which §7
+    allows.
+
+    Refused at load, as the policy rule below is. The error names the accounts,
+    where they are declared, and the refs. It compares stores as the file states
+    them, for the reason ``_check_one_policy_per_password`` gives. Where one
+    store comes only from a profile or ``SOPULI_VAULT``, the file cannot show the
+    pair. ``sopuli.generate.draw_once`` then draws each account its own value,
+    and ``generate.group`` refuses a write that carries two values for one
+    password, before anything is written.
+
+    Accounts are compared as the file spells them. Whether two spellings are
+    one Oracle user is the duplicate-name rule's question, not this one's.
+    """
+    documents: dict[tuple[str | None, str], dict[tuple[tuple[str, ...], str], Binding]] = {}
+    for binding in bindings:
+        ref = binding.secret
+        if ref is None:
+            continue
+        place = () if ref.field is None else (ref.field, *ref.pointer_segments)
+        seen = documents.setdefault((binding.vault, normalise_path(ref.path)), {})
+        if (place, binding.account) in seen:
+            # One account in one place on another target: a shared password.
+            continue
+        for (other_place, _), other in seen.items():
+            if not _overlaps(place, other_place):
+                continue
+            other_ref = other.secret
+            assert other_ref is not None
+            if place == other_place:
+                fault = f"resolve to one password at {_address(binding, ref)}"
+            else:
+                fault = (
+                    f"overlap at {_address(other, other_ref)} and {_address(binding, ref)}: "
+                    "writing one password replaces the other"
+                )
+            declared = _declared_in(other, binding)
+            if other.account == binding.account:
+                # The places differ, or `seen` would have skipped this binding.
+                message = f"{binding.account!r} ({declared}) has two places that {fault}"
+            else:
+                message = f"{other.account!r} and {binding.account!r} ({declared}) {fault}"
+            raise ConfigError(
+                message,
+                at=where.get(binding.application, ROOT),
+                hint=(
+                    "each account needs one place of its own in the document, such as "
+                    "path#FIELD/{account}: give the refs distinct, non-nested fields or pointers"
+                ),
+            )
+        seen[(place, binding.account)] = binding
+
+
+def _overlaps(one: tuple[str, ...], other: tuple[str, ...]) -> bool:
+    """Whether one place contains the other, or they are the same place."""
+    shorter = min(len(one), len(other))
+    return one[:shorter] == other[:shorter]
+
+
+def _declared_in(first: Binding, second: Binding) -> str:
+    """Where two bindings come from, for a message about the pair."""
+    if first.application == second.application:
+        return (
+            "both in the inline application"
+            if first.application is None
+            else (f"both in entry {first.application!r}")
+        )
+    return f"entries {first.application!r} and {second.application!r}"
+
+
+def _address(binding: Binding, ref: SecretRef) -> str:
+    """``ref``, with the binding's store in front where the ref names none."""
+    if ref.vault is not None or binding.vault is None:
+        return str(ref)
+    return f"{binding.vault}:{ref}"
 
 
 def _check_one_policy_per_password(
@@ -105,8 +214,8 @@ def _check_one_policy_per_password(
     another. Checking again at run time would check only what the run's
     selectors kept, so the answer would depend on the selection.
 
-    Two *different* accounts on one field are not this rule's case: that is two
-    accounts on one password, whatever their policies (#841).
+    Two *different* accounts on one field never reach it:
+    ``_check_one_account_per_password`` refuses them first.
     """
     seen: dict[tuple[str, str | None, str, str | None, str | None], Binding] = {}
     for binding in bindings:
@@ -117,11 +226,7 @@ def _check_one_policy_per_password(
         first = seen.setdefault(key, binding)
         if first.policy == binding.policy:
             continue
-        address = (
-            str(ref)
-            if ref.vault is not None or binding.vault is None
-            else (f"{binding.vault}:{ref}")
-        )
+        address = _address(binding, ref)
         if first.target == binding.target:
             # Two entries on one target: the entries tell them apart.
             places = (

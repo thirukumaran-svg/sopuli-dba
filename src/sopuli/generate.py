@@ -224,20 +224,27 @@ def draw_once(bindings: Iterable[Binding], draw: DrawFunction) -> list[Candidate
     binding of the same password gets that candidate with its own binding, so
     each still has a result of its own and all of them name one value.
 
-    The key is the password alone. Two bindings of one password under two
-    policies are a defect in the file, which the loader refuses (#830). Were
-    one to get here, one value drawn against the first binding's policy is
+    The key is the password and the account. Two bindings of one password under
+    two policies are a defect in the file, which the loader refuses (#830).
+    Were one to get here, one value drawn against the first binding's policy is
     still better than two values for one field, where the last write wins.
+
+    **Two different accounts are never given one value.** The loader refuses
+    two accounts on one password where the file states both stores (#841).
+    Where it cannot, because one store comes from a profile or
+    ``SOPULI_VAULT``, each account is drawn its own value, and :func:`group`
+    then refuses a write carrying two values for one password, before anything
+    is written.
     """
-    drawn: dict[PasswordKey, Candidate] = {}
+    drawn: dict[tuple[PasswordKey, str], Candidate] = {}
     candidates: list[Candidate] = []
     for binding in bindings:
         key = password_key(binding)
-        first = drawn.get(key) if key is not None else None
+        first = drawn.get((key, binding.account)) if key is not None else None
         if first is None:
             candidate = draw(binding)
             if key is not None:
-                drawn[key] = candidate
+                drawn[(key, binding.account)] = candidate
         else:
             candidate = replace(first, binding=binding)
         candidates.append(candidate)
@@ -264,21 +271,39 @@ def one_per_password(candidates: Iterable[Candidate]) -> list[Candidate]:
 def _refuse_two_values_for_one_password(write: DocumentWrite) -> None:
     """Refuse a write that carries two different values for one password.
 
-    :func:`draw_once` prevents it. This catches a draw site that skips it:
-    the merge patch would keep the last value and lose the others without a
-    word, which is the fault #830 found.
+    The merge patch would keep the last value and lose the others without a
+    word, which is the fault #830 found. Two causes reach it:
+
+    * two accounts on one password, which the loader refuses only where the
+      file states both stores (#841). That is a defect in the file, so it is a
+      :class:`~sopuli.config.errors.ConfigError`, raised before anything is
+      written;
+    * one account drawn twice, by a draw site that skips :func:`draw_once`.
+      That is a defect in the code, so it is a ``ValueError``.
     """
-    values: dict[PasswordKey, Secret] = {}
+    values: dict[PasswordKey, Candidate] = {}
     for candidate in write.candidates:
         key = password_key(candidate.binding)
         if key is None:
             continue
-        first = values.setdefault(key, candidate.value)
-        if first is not candidate.value:
-            raise ValueError(
-                f"two different passwords for {candidate.binding.account!r} in "
-                f"{write.key}: draw a shared password once (generate.draw_once)"
+        first = values.setdefault(key, candidate)
+        if first.value is candidate.value:
+            continue
+        if first.binding.account != candidate.binding.account:
+            raise ConfigError(
+                f"{first.binding.account!r} and {candidate.binding.account!r} resolve to one "
+                f"password in {write.key}: each account needs one place of its own in the "
+                "document",
+                hint=(
+                    "the store for one of them came from a profile or SOPULI_VAULT, so loading "
+                    "the file could not show this; give the refs distinct, non-nested fields or "
+                    "pointers, such as path#FIELD/{account}"
+                ),
             )
+        raise ValueError(
+            f"two different passwords for {candidate.binding.account!r} in "
+            f"{write.key}: draw a shared password once (generate.draw_once)"
+        )
 
 
 def group(candidates: Iterable[Candidate]) -> tuple[DocumentWrite, ...]:
@@ -316,8 +341,10 @@ def group(candidates: Iterable[Candidate]) -> tuple[DocumentWrite, ...]:
         DocumentWrite(key=key, candidates=tuple(found)) for key, found in grouped.items()
     )
     for write in writes:
-        _refuse_colliding_stages(write)
+        # Two values for one password first, as the loader orders its rules:
+        # the stage collision is a symptom of it where staging is emulated.
         _refuse_two_values_for_one_password(write)
+        _refuse_colliding_stages(write)
     return writes
 
 

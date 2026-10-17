@@ -213,6 +213,21 @@ def test_two_values_for_one_password_are_refused_rather_than_merged() -> None:
         generate.group(separately)
 
 
+def test_two_accounts_on_one_password_get_two_values_and_the_write_is_refused() -> None:
+    """The pair the loader cannot see: one store named, one from the run.
+    `draw_once` never gives two accounts one value, and `group` then refuses
+    the write before anything is written (#841)."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/shared")
+    web, other = config.bindings
+    api = replace(other, account="acme_api_user")
+
+    drawn = generate.draw_once([web, api], draw(config))
+
+    assert drawn[0].value is not drawn[1].value
+    with pytest.raises(ConfigError, match="'acme_web_user' and 'acme_api_user' resolve to one"):
+        generate.group(drawn)
+
+
 def test_a_shared_password_is_one_account_in_its_write_and_one_draw_to_report() -> None:
     config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
     drawn = generate.draw_once(config.bindings, draw(config))
@@ -456,10 +471,14 @@ def test_two_accounts_staging_into_one_place_are_refused() -> None:
     """
     config = estate()
     name, policy = generate.policy_for(config, config.bindings[0])
-    ref = parse_secret_ref("apps/acme/db#DB_CREDENTIALS")
     drawn = [
         generate.candidate_for(
-            Binding(account=account, target="plain", secret=ref, vault="vault-dev"),
+            Binding(
+                account=account,
+                target="plain",
+                secret=parse_secret_ref(f"apps/acme/db#{account}"),
+                vault="vault-dev",
+            ),
             policy,
             name=name,
         )
