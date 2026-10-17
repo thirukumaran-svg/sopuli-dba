@@ -183,6 +183,63 @@ def test_one_document_is_one_write(
     assert found.version == 1
 
 
+#: One account on two targets whose ref names neither: one password (§7).
+SHARED = TWO_DOCUMENTS.replace("apps/acme/{target}#", "apps/acme/shared#")
+
+
+def test_a_password_two_targets_share_is_drawn_once(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    events: Draft202012Validator,
+) -> None:
+    """One `password.generated` and one write for the one password (#830)."""
+    result = run(runner, write_config(SHARED), "--offline", "--output", "jsonl")
+
+    lines = stream(result.stdout, events)
+    assert [line["account"] for line in lines if line["event"] == "password.generated"] == [
+        "acme_web_user"
+    ]
+    assert len([line for line in lines if line["event"] == "vault.write"]) == 1
+
+
+def test_each_binding_of_a_shared_password_keeps_its_result(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    validator: Draft202012Validator,
+) -> None:
+    """`results[]` keeps one entry per binding, as `apply` and `check` do, and
+    each names the one version (`03-json-output.md`)."""
+    found = document(run(runner, write_config(SHARED), "--offline", "--output", "json"))
+
+    validator.validate(found)
+    assert [(entry["target"], entry["secret"]["version"]) for entry in found["results"]] == [
+        ("appdb-alpha", 1),
+        ("appdb-beta", 1),
+    ]
+    assert found["summary"]["total"] == 2
+
+
+def test_the_terminal_names_a_shared_password_once(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The account once in SEEDED, one row naming both targets, and a closing
+    line that counts one password."""
+    result = run(runner, write_config(SHARED), "--offline", "--promote", "--confirm")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    lines = result.output.splitlines()
+    seeded = lines[lines.index(next(line for line in lines if line.startswith("SECRET  "))) :]
+    assert "vault-prod:apps/acme/shared  acme_web_user  -" in seeded
+    # The result table: the plan above it has a row per binding, on purpose.
+    rows = [line for line in lines if line.startswith("acme_web_user") and "promoted" in line]
+    assert rows == [
+        "acme_web_user  vault-prod:apps/acme/shared  promoted to v1, for appdb-alpha, appdb-beta"
+    ]
+    assert "1 promoted to current;" in result.output
+
+
 def test_current_is_not_touched(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

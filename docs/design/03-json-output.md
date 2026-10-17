@@ -574,6 +574,14 @@ The staging write (UC-1 §8 step 4) produces `generate`'s entry, with its
 the run rotated appears twice, once per phase, which matches the two writes it
 made.
 
+**A shared password has an entry per binding.** One account on several targets
+with no target label in its ref holds one password (`01-configuration.md` §7).
+`creds generate` and `creds rotate` draw it once and write it once, and
+`results[]` still has one entry per target, as `apply` and `check` do. Every
+entry names the same `secret` and `version`, and `summary.total` counts the
+entries. The run sends one `password.generated` event for the password, not one
+per target. The text output gives the password one row and counts it once.
+
 `rotate` adds one diagnostic and no fields. `SOPULI-W012` is UC-1 §8 step 8.
 When `--max-age-days` narrows a run, `summary.total` shows it; there is no
 member for it. An account the age filter left alone is one this run did not act

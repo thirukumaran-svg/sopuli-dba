@@ -11,6 +11,7 @@ one was intended or three accounts sharing one password.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -126,6 +127,100 @@ def test_each_account_is_drawn_separately() -> None:
     drawn = candidates(estate(accounts=["acme_web_user", "acme_batch_user"]))
 
     assert len({one.value.reveal() for one in drawn}) == 2
+
+
+def two_targets(template: str) -> Config:
+    """`acme_web_user` on two targets in one store, under one policy."""
+    return build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "policies": POLICIES,
+            "defaults": {"policy": "app-standard"},
+            "targets": [
+                {"name": name, "type": "oracle", "dsn": "h:1521/x", "vault": "vault-dev"}
+                for name in ("acme-alpha", "acme-beta")
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["acme-alpha", "acme-beta"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": template,
+                }
+            ],
+        }
+    )
+
+
+def draw(config: Config) -> generate.DrawFunction:
+    def one(binding: Binding) -> generate.Candidate:
+        name, policy = generate.policy_for(config, binding)
+        return generate.candidate_for(binding, policy, name=name)
+
+    return one
+
+
+def test_one_password_on_two_targets_is_drawn_once() -> None:
+    """The ref names no target, so both bindings are one password. Each keeps
+    its own candidate, for its own result, and both hold the one value (#830)."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    calls: list[str] = []
+
+    def counted(binding: Binding) -> generate.Candidate:
+        calls.append(binding.target)
+        return draw(config)(binding)
+
+    drawn = generate.draw_once(config.bindings, counted)
+
+    assert calls == ["acme-alpha"]
+    assert [one.binding.target for one in drawn] == ["acme-alpha", "acme-beta"]
+    assert drawn[0].value is drawn[1].value
+
+
+def test_a_password_per_target_is_drawn_per_target() -> None:
+    config = two_targets("acme/{target}#DB_CREDENTIALS/{account}")
+
+    drawn = generate.draw_once(config.bindings, draw(config))
+
+    assert drawn[0].value.reveal() != drawn[1].value.reveal()
+
+
+def test_a_shared_password_is_drawn_once_whatever_its_bindings_policies() -> None:
+    """The key is the password alone. The loader refuses two policies on one
+    password (#830); were they to get here, one value still beats two values
+    for one field."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    alpha, beta = config.bindings
+    calls: list[str] = []
+
+    def counted(binding: Binding) -> generate.Candidate:
+        calls.append(binding.target)
+        return draw(config)(binding)
+
+    generate.draw_once([alpha, replace(beta, policy="app-short")], counted)
+
+    assert calls == ["acme-alpha"]
+
+
+def test_two_values_for_one_password_are_refused_rather_than_merged() -> None:
+    """A draw site that skips `draw_once` would put two values in one field,
+    and the merge would keep the last. `group` refuses it."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    separately = [draw(config)(binding) for binding in config.bindings]
+
+    with pytest.raises(ValueError, match="two different passwords for 'acme_web_user'"):
+        generate.group(separately)
+
+
+def test_a_shared_password_is_one_account_in_its_write_and_one_draw_to_report() -> None:
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    drawn = generate.draw_once(config.bindings, draw(config))
+
+    (write,) = generate.group(drawn)
+
+    assert write.accounts == ("acme_web_user",)
+    assert [one.binding.target for one in generate.one_per_password(drawn)] == ["acme-alpha"]
 
 
 def test_a_supplied_password_goes_through_the_same_predicate() -> None:

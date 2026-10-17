@@ -5051,17 +5051,19 @@ def creds_generate(
         # and which a consumer would otherwise have to recompute. The notes the
         # reading produced go out ahead of it as `diagnostic` events.
         emitter.event(document, "constraints.resolved", data=document.constraints)
-    candidates = [
-        _candidate(
+    # Once per password, not per binding: an account on several targets that
+    # share its ref is one password (`sopuli.generate`'s docstring).
+    candidates = staging.draw_once(
+        bindings,
+        lambda binding: _candidate(
             binding,
             config,
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
             readings=limits.readings,
-        )
-        for binding in bindings
-    ]
+        ),
+    )
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
 
@@ -5685,7 +5687,7 @@ def _announce_draws(write: DocumentWrite, run: Invocation, *, stage: str = PENDI
     it happens -- so it gets no event, and its row says ``supplied``.
     """
     emitter = run.emitter()
-    for candidate in write.candidates:
+    for candidate in staging.one_per_password(write.candidates):
         if not candidate.supplied:
             emitter.event(
                 run.document,
@@ -8221,17 +8223,20 @@ def _restage(
     notes: list[Diagnostic] = []
     for key, records in _redraws_by_document(wanted).items():
         candidates = tuple(
-            _candidate(record.binding, config, name=None, supplied=None, enforce=True)
-            for record in records
+            staging.draw_once(
+                [record.binding for record in records],
+                lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+            )
         )
         # Sent as each password is drawn, before the write that stages it, so a
         # write that fails still leaves the draw on the stream -- and never the
-        # value, which this event's closed payload has no room for.
-        for record in records:
+        # value, which this event's closed payload has no room for. One per
+        # password, as `_announce_draws` sends them.
+        for candidate in staging.one_per_password(candidates):
             emitter.event(
                 run.document,
                 "password.generated",
-                account=record.binding.account,
+                account=candidate.binding.account,
                 data={"vault": key.store, "path": key.path, "stage": PENDING},
             )
         stored = documents.get(key)
@@ -9648,10 +9653,10 @@ def _rotate_estate(
 
     # Step 4 -- `creds generate`'s write, behind the fence it uses.
     writes = staging.group(
-        [
-            _candidate(binding, config, name=None, supplied=None, enforce=True)
-            for binding in rotating
-        ]
+        staging.draw_once(
+            rotating,
+            lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+        )
     )
     for write in writes:
         try:

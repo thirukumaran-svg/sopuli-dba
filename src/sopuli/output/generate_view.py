@@ -23,7 +23,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sopuli.diagnostics import CURRENT_REPLACED, PENDING_REPLACED, POLICY_VIOLATION_ACCEPTED
-from sopuli.generate import VAULT_ONLY, Candidate, DocumentWrite
+from sopuli.generate import VAULT_ONLY, Candidate, DocumentWrite, password_key
 from sopuli.lock.keys import LockKey
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role
@@ -306,9 +306,20 @@ def render_promotion_table(
 def render_generate(rows: Sequence[tuple[Candidate, str, str]]) -> str:
     """The result table, and the closing line.
 
-    ``rows`` is (candidate, state, detail). The password is not among them and
-    there is no column for one.
+    ``rows`` is (candidate, state, detail), one per binding. The password is not
+    among them and there is no column for one.
+
+    **One table row per password, not per binding.** An account on several
+    targets that share its ref has one password and one row, and the row's
+    result names the targets. The closing line counts passwords, so one shared
+    password is "1 staged", as `creds check` counts it as one secret.
+    `results[]` keeps one entry per binding (`03-json-output.md`).
     """
+    grouped: dict[object, tuple[Candidate, str, str, list[str]]] = {}
+    for candidate, state, detail in rows:
+        key = password_key(candidate.binding) or id(candidate)
+        found = grouped.setdefault(key, (candidate, state, detail, []))
+        found[3].append(candidate.binding.target)
     table = render_table(
         [
             Column("ACCOUNT", _ACCOUNT),
@@ -319,12 +330,20 @@ def render_generate(rows: Sequence[tuple[Candidate, str, str]]) -> str:
             [
                 candidate.binding.account,
                 _address(candidate),
-                _result(state, detail),
+                _result(state, _for_targets(detail, targets)),
             ]
-            for candidate, state, detail in rows
+            for candidate, state, detail, targets in grouped.values()
         ],
     )
-    return "\n".join([*table, "", _verdict([state for _, state, _ in rows])])
+    states = [state for _, state, _, _ in grouped.values()]
+    return "\n".join([*table, "", _verdict(states)])
+
+
+def _for_targets(detail: str, targets: Sequence[str]) -> str:
+    """``detail``, naming the targets where one password serves more than one."""
+    if len(targets) < 2:
+        return detail
+    return f"{detail}, for {', '.join(targets)}"
 
 
 def _address(candidate: Candidate) -> Cell | str:
