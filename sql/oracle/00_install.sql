@@ -506,6 +506,8 @@ PROMPT
 PROMPT Next steps:
 PROMPT   1. set a real password for &eff_user, or configure wallet auth,
 PROMPT      and store it where the tool's config points
-PROMPT   2. enable auditing:  @01_audit_policy.sql
+PROMPT   2. enable auditing:  @01_audit_policy.sql &eff_user [personal accounts]
+PROMPT      COMMON install: run it here, and also in each PDB that has local
+PROMPT      DBAs or local personal accounts
 PROMPT   3. check from the tool:  sopuli doctor --check-privileges --target <name>
 PROMPT

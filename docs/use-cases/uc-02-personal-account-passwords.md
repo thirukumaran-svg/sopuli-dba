@@ -69,7 +69,11 @@ password is not.
 **An unseen reset records whether the database audits the DBA's routes**, as
 `audited` in the reset record (§3.1) and in the run document's result (decided
 in H10). It does not warn and it does not refuse. The tool creates no audit
-policy. There are three values:
+policy. `sql/oracle/01_audit_policy.sql` creates policies that give `true` when
+it runs in the person's own container with the person in its list. On a
+multitenant database that means a run in the PDB, not only in the root.
+`02-oracle-privileges.md` §5 says where to run it and what each run gives. There
+are three values:
 
 - `true`: enabled audit policies record the person's logons, and every user's
   `ALTER USER`.

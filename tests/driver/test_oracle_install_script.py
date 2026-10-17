@@ -763,26 +763,67 @@ def test_uninstall_removes_the_account_and_every_grant_with_it(
     )
 
 
-def _policies(container: str) -> set[str]:
+def _policies(container: str, connect: str = ROOT) -> set[str]:
+    """The `SOPULI_` audit policies `connect`'s container sees, with `COMMON`."""
     return set(
         query(
             container,
-            ROOT,
-            "SELECT DISTINCT policy_name FROM audit_unified_policies"
-            " WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL');",
+            connect,
+            "SELECT DISTINCT policy_name || ' ' || common FROM audit_unified_policies"
+            " WHERE policy_name LIKE 'SOPULI\\_%' ESCAPE '\\';",
         )
     )
 
 
+def _enabled_by(container: str, connect: str, policy: str) -> set[str]:
+    return set(
+        query(
+            container,
+            connect,
+            "SELECT entity_name FROM audit_unified_enabled_policies"
+            f" WHERE policy_name = '{policy}';",
+        )
+    )
+
+
+@pytest.fixture
+def no_audit_policies(container: str, scripts: str, cdb_only: None) -> Iterator[None]:
+    """No `SOPULI_` audit policy before or after, in the PDB or the root.
+
+    `99_uninstall.sql` with `keep_audit=N` is the cleanup, in the PDB first,
+    as its header says. The account it names is dropped by `clean` anyway.
+    Every test that uses this needs a CDB, so it skips on a non-CDB.
+    """
+    places = ((PDB, LOCAL_SVC), (ROOT, COMMON_SVC))
+
+    def drop_all() -> None:
+        # The uninstall runs under CONTINUE, so its exit code alone says little.
+        # ORA-46xxx is the audit block failing, which would leak policies into
+        # the next test and fail it far from the cause.
+        for connect, account in places:
+            result = sqlplus(container, connect, f"{scripts}/99_uninstall.sql", account, "N")
+            assert result.returncode == 0, result.stdout[-2000:]
+            assert "ORA-46" not in result.stdout, result.stdout[-2000:]
+
+    drop_all()
+    yield
+    drop_all()
+
+
 def test_uninstall_with_keep_audit_n_drops_every_policy(
-    container: str, scripts: str, clean: None, cdb_only: None, unified_audit_only: None
+    container: str,
+    scripts: str,
+    clean: None,
+    cdb_only: None,
+    unified_audit_only: None,
+    no_audit_policies: None,
 ) -> None:
     """`keep_audit=N` removes both policies.
 
     `audit_unified_policies` returns one row **per policy per audit option** --
-    six for `SOPULI_POL`. A loop over those rows would drop the policy on the
+    six for `SOPULI_CDB_POL`. A loop over those rows would drop the policy on the
     first iteration, raise `ORA-46357` on the second, and abort the block before
-    `SOPULI_LOGON_POL` is reached.
+    `SOPULI_CDB_LOGON_POL` is reached.
 
     Asserting on `returncode` alone would pass against that:
     `WHENEVER SQLERROR CONTINUE` holds the exit code at 0, so the uninstall
@@ -791,7 +832,7 @@ def test_uninstall_with_keep_audit_n_drops_every_policy(
     """
     assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
     assert sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", COMMON_SVC).returncode == 0
-    assert _policies(container) == {"SOPULI_POL", "SOPULI_LOGON_POL"}
+    assert _policies(container) == {"SOPULI_CDB_POL YES", "SOPULI_CDB_LOGON_POL YES"}
 
     result = sqlplus(container, ROOT, f"{scripts}/99_uninstall.sql", COMMON_SVC, "N")
     assert result.returncode == 0, result.stdout[-2000:]
@@ -799,11 +840,16 @@ def test_uninstall_with_keep_audit_n_drops_every_policy(
 
 
 def test_uninstall_with_keep_audit_n_drops_a_policy_another_install_enabled(
-    container: str, scripts: str, clean: None, cdb_only: None, unified_audit_only: None
+    container: str,
+    scripts: str,
+    clean: None,
+    cdb_only: None,
+    unified_audit_only: None,
+    no_audit_policies: None,
 ) -> None:
     """Two installs, then uninstall one. This is the case that finds the bug.
 
-    `01_audit_policy.sql` enables `sopuli_logon_pol` **`BY &svc_user`**, and
+    `01_audit_policy.sql` enables `sopuli_cdb_logon_pol` **`BY &svc_user`**, and
     `NOAUDIT POLICY p` unqualified does *not* lift a `BY <user>` enablement -- it
     reports success, leaves the policy enabled, and the `DROP` then fails with
     `ORA-46361`, aborting the block before the other policy is dropped either.
@@ -824,14 +870,7 @@ def test_uninstall_with_keep_audit_n_drops_a_policy_another_install_enabled(
         )
         assert sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", name).returncode == 0
 
-    enabled = set(
-        query(
-            container,
-            ROOT,
-            "SELECT entity_name FROM audit_unified_enabled_policies"
-            " WHERE policy_name = 'SOPULI_LOGON_POL';",
-        )
-    )
+    enabled = _enabled_by(container, ROOT, "SOPULI_CDB_LOGON_POL")
     assert enabled == {COMMON_SVC, COMMON_SVC_OTHER}, enabled
 
     # Uninstall only the first. The second account -- and its enablement -- stay.
@@ -854,6 +893,158 @@ def test_audit_policy_script_fails_loudly_on_an_account_that_does_not_exist(
     result = sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", "NO_SUCH_ACCOUNT")
     assert result.returncode != 0
     assert "ORA-01435" in result.stdout
+
+
+# ------------------------------------------------ the audit script's containers ---
+#
+# `01_audit_policy.sql` creates common `SOPULI_CDB_*` policies in `CDB$ROOT` and
+# local `SOPULI_*` policies elsewhere. A policy created in the root without
+# `CONTAINER = ALL` records nothing in a PDB (`13_audit_coverage_probe.sql` AC8).
+
+#: Personal accounts for the list. Local to the PDB, and named for this module.
+PERSONS = ("ACME_INSTALL_ALICE", "ACME_INSTALL_BOB")
+
+
+@pytest.fixture
+def persons(container: str, cdb_only: None) -> Iterator[tuple[str, ...]]:
+    """`PERSONS`, created in the PDB, and dropped again after."""
+    for name in PERSONS:
+        drop(container, PDB, name)
+        query(container, PDB, f'CREATE USER {name} IDENTIFIED BY "Acme-Install-7q";')
+    yield PERSONS
+    for name in PERSONS:
+        drop(container, PDB, name)
+
+
+def test_the_audit_script_creates_common_policies_in_the_root(
+    container: str,
+    scripts: str,
+    clean: None,
+    cdb_only: None,
+    unified_audit_only: None,
+    no_audit_policies: None,
+) -> None:
+    """In `CDB$ROOT` every policy is common, and the PDB sees them as common."""
+    assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
+    result = sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", COMMON_SVC)
+    assert result.returncode == 0, result.stdout[-2000:]
+
+    common = {"SOPULI_CDB_POL YES", "SOPULI_CDB_LOGON_POL YES"}
+    assert _policies(container) == common
+    assert _policies(container, PDB) == common
+    assert _enabled_by(container, PDB, "SOPULI_CDB_LOGON_POL") == {COMMON_SVC}
+
+
+def test_the_audit_script_replaces_the_roots_local_policies(
+    container: str,
+    scripts: str,
+    clean: None,
+    cdb_only: None,
+    unified_audit_only: None,
+    no_audit_policies: None,
+) -> None:
+    """The root's local `SOPULI_POL` and `SOPULI_LOGON_POL`, as an older copy of
+    the script created them, are dropped. The logon policy is enabled `BY` an
+    account, which a plain `NOAUDIT` does not lift."""
+    assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
+    query(
+        container,
+        ROOT,
+        "CREATE AUDIT POLICY sopuli_pol ACTIONS ALTER USER, CREATE USER, DROP USER;\n"
+        "AUDIT POLICY sopuli_pol;\n"
+        "CREATE AUDIT POLICY sopuli_logon_pol ACTIONS LOGON;\n"
+        f"AUDIT POLICY sopuli_logon_pol BY {COMMON_SVC} WHENEVER NOT SUCCESSFUL;",
+    )
+    assert _policies(container) == {"SOPULI_POL NO", "SOPULI_LOGON_POL NO"}
+
+    result = sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", COMMON_SVC)
+
+    assert result.returncode == 0, result.stdout[-2000:]
+    assert "dropped SOPULI_LOGON_POL from CDB$ROOT" in result.stdout
+    assert _policies(container) == {"SOPULI_CDB_POL YES", "SOPULI_CDB_LOGON_POL YES"}
+
+
+def test_the_audit_script_in_a_pdb_enables_the_listed_personal_accounts(
+    container: str,
+    scripts: str,
+    clean: None,
+    unified_audit_only: None,
+    no_audit_policies: None,
+    persons: tuple[str, ...],
+) -> None:
+    """A COMMON install also runs the script in the PDB. Its policies are local,
+    and a longer list on a second run adds only the new name."""
+    alice, bob = persons
+    assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
+    script = f"{scripts}/01_audit_policy.sql"
+
+    first = sqlplus(container, PDB, script, COMMON_SVC, alice.lower())
+    assert first.returncode == 0, first.stdout[-2000:]
+    assert _policies(container, PDB) == {
+        "SOPULI_POL NO",
+        "SOPULI_LOGON_POL NO",
+        "SOPULI_PERSON_LOGON_POL NO",
+    }
+    assert _enabled_by(container, PDB, "SOPULI_PERSON_LOGON_POL") == {alice}
+
+    second = sqlplus(container, PDB, script, COMMON_SVC, f"{alice}, {bob}")
+    assert second.returncode == 0, second.stdout[-2000:]
+    assert f"already enabled BY {alice}" in second.stdout
+    assert f"enabled SOPULI_PERSON_LOGON_POL BY {bob}" in second.stdout
+    assert _enabled_by(container, PDB, "SOPULI_PERSON_LOGON_POL") == {alice, bob}
+
+
+def test_the_audit_script_refuses_a_personal_account_that_does_not_exist(
+    container: str,
+    scripts: str,
+    clean: None,
+    unified_audit_only: None,
+    no_audit_policies: None,
+    persons: tuple[str, ...],
+) -> None:
+    """A typing error in the list stops the script before anything in section 3
+    is created, so the names before it are not enabled either."""
+    assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
+
+    result = sqlplus(
+        container,
+        PDB,
+        f"{scripts}/01_audit_policy.sql",
+        COMMON_SVC,
+        f"{persons[0]},ACME_NOBODY,{persons[1]}",
+    )
+
+    assert result.returncode != 0
+    assert "ORA-44001" in result.stdout
+    assert "SOPULI_PERSON_LOGON_POL NO" not in _policies(container, PDB)
+
+
+def test_uninstall_in_a_pdb_drops_its_policies_and_leaves_the_roots(
+    container: str,
+    scripts: str,
+    clean: None,
+    unified_audit_only: None,
+    no_audit_policies: None,
+    persons: tuple[str, ...],
+) -> None:
+    """The PDB sees the root's common policies and cannot drop them. The
+    uninstall leaves them out there, and still drops the PDB's own."""
+    assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
+    assert sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", COMMON_SVC).returncode == 0
+    assert (
+        sqlplus(container, PDB, f"{scripts}/01_audit_policy.sql", COMMON_SVC, persons[0]).returncode
+        == 0
+    )
+
+    result = sqlplus(container, PDB, f"{scripts}/99_uninstall.sql", COMMON_SVC, "N")
+
+    assert result.returncode == 0, result.stdout[-2000:]
+    # The common account cannot be dropped from the PDB, so section 1 fails
+    # there. ORA-46xxx would be the audit block failing on a common policy.
+    assert "ORA-46" not in result.stdout, result.stdout[-2000:]
+    common = {"SOPULI_CDB_POL YES", "SOPULI_CDB_LOGON_POL YES"}
+    assert _policies(container, PDB) == common
+    assert _policies(container) == common
 
 
 # ------------------------------------------------- what a timeout leaves behind ---

@@ -55,6 +55,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `01_audit_policy.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | As on 21.3 |
 | `01_audit_policy.sql` | `11.2.0.2.0` | 2026-09-08 | #382 | Refuses with `ORA-20020`: audit policies arrived in 12.1 |
 | `01_audit_policy.sql` | `19.3.0.0.0` | 2026-09-28 | #479 | PDB and `CDB$ROOT` |
+| `01_audit_policy.sql` | `23.26.2.0.0` | 2026-10-17 | #812 | Common `SOPULI_CDB_*` policies in `CDB$ROOT`, local ones in the PDB; the root's older local policies dropped; the personal-account list, added to on a second run; a name that is not an account refused with `ORA-44001` |
 | `02_password_leak_probe.sql` | `23.26.2.0.0` | 2026-08-26 | — | All three positions. No cursor for the DDL; unified audit masks it; the only leak is the PL/SQL block (C3). Position 2 with `AUDIT_SYS_OPERATIONS` 2026-09-11 (#407) |
 | `02_password_leak_probe.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | Position 1 as on 26ai; traditional auditing masks too. Position 2 2026-09-11 (#407) |
 | `02_password_leak_probe.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | Position 1, as on 21.3 |
@@ -99,6 +100,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `13_audit_coverage_probe.sql` | `23.26.2.0.0` | 2026-10-15 | #591 | Pure unified mode. A `BY` or `EXCEPT` list applies to the account that issues the statement, so a policy `BY` the person misses the DBA's `ALTER USER`. The account reads the policy views after `SYS` grants `READ`; `SYSTEM` cannot grant it. A common policy enabled in the root records nothing of local accounts' route, and records a common account's logon |
 | `13_audit_coverage_probe.sql` | `23.26.2.0.0` | 2026-10-17 | #812 | `01_audit_policy.sql`'s policies, created in the root with no `CONTAINER` clause, record nothing in a PDB, not even the service account's `ALTER USER`. Created `CONTAINER = ALL`, they record common accounts in every container and no local account. Created in the PDB, they record every account's `ALTER USER` there. The logon policy records only the service account's failed logons, so no placement records a proxy logon. A common account reset in the root is recorded there. A common and a PDB policy may have one name |
 | `99_uninstall.sql` | `23.26.2.0.0` | 2026-08-26 | — | `COMMON` and PDB installs, both `keep_audit` settings |
+| `99_uninstall.sql` | `23.26.2.0.0` | 2026-10-17 | #812 | `keep_audit=N` drops the `SOPULI_CDB_*` policies in `CDB$ROOT`; in a PDB it drops the PDB's own and leaves the root's |
 | `99_uninstall.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | Both `keep_audit` settings |
 | `99_uninstall.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | As on 21.3 |
 | `99_uninstall.sql` | `11.2.0.2.0` | 2026-09-08 | #382 | The account and its grants. There are no audit policies to keep |

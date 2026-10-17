@@ -19,6 +19,10 @@
 --         with `ACME_SVC N`, which dropped the account and both policies, and
 --         a COMMON install in CDB$ROOT with `C##SOPULI_SVC Y`, which dropped the
 --         account and left the policies.
+--         Confirmed on 26ai Free 23.26.2.0.0 (2026-10-17, #812) with
+--         keep_audit=N: in CDB$ROOT it drops the SOPULI_CDB_* policies, and in
+--         FREEPDB1 it drops the PDB's own and leaves the root's. Untried on
+--         other releases.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in
@@ -26,7 +30,11 @@
 -- run this, because afterwards nothing here can set them again.
 --
 -- Run in the same container as the install. For a COMMON install, run in
--- CDB$ROOT.
+-- CDB$ROOT. To drop the policies 01_audit_policy.sql created in a PDB, run it
+-- there too, with keep_audit=N, and run it in the PDBs BEFORE the root. The
+-- PDB's logon policy is enabled BY the common service account, and NOAUDIT
+-- has to name that account. Outside the root the script leaves a common
+-- account alone, because only CDB$ROOT can drop it.
 --------------------------------------------------------------------------------
 
 SET SERVEROUTPUT ON
@@ -62,18 +70,41 @@ COLUMN p_keep NEW_VALUE keep_audit NOPRINT
 SELECT NVL('&1', 'C##SOPULI_SVC') AS p_user,
        NVL('&2', 'Y')             AS p_keep
   FROM dual;
+
+-- Whether this is CDB$ROOT. CON_NAME raises ORA-02003 on 11.2, which has no
+-- containers, so it is read in PL/SQL with a handler, as 00_install.sql does.
+VARIABLE in_root VARCHAR2(1)
+BEGIN
+  :in_root := 'N';
+  IF SYS_CONTEXT('USERENV','CON_NAME') = 'CDB$ROOT' THEN
+    :in_root := 'Y';
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -2003 THEN
+      RAISE;
+    END IF;
+END;
+/
+COLUMN p_root NEW_VALUE in_root NOPRINT
+SELECT :in_root AS p_root FROM dual;
 SET TERMOUT ON
 
 WHENEVER SQLERROR CONTINUE
 
 --------------------------------------------------------------------------------
 -- 1. The account. Dropping it removes every grant with it.
+--
+--    Outside CDB$ROOT a common account (C##) is left alone: a PDB cannot drop
+--    it, and the run in the root does.
 --------------------------------------------------------------------------------
 DECLARE
   l_cnt PLS_INTEGER;
 BEGIN
   SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = UPPER('&svc_user');
-  IF l_cnt > 0 THEN
+  IF l_cnt > 0 AND '&in_root' = 'N' AND UPPER('&svc_user') LIKE 'C##%' THEN
+    DBMS_OUTPUT.PUT_LINE('&svc_user is a common account: drop it from CDB$ROOT');
+  ELSIF l_cnt > 0 THEN
     EXECUTE IMMEDIATE 'DROP USER &svc_user CASCADE';
     DBMS_OUTPUT.PUT_LINE('dropped &svc_user (ALTER USER grant gone with it)');
   ELSE
@@ -88,31 +119,41 @@ END;
 --    Default is to KEEP them. Auditing ALTER USER is worth having whether or not
 --    this tool is installed, and removing an audit policy during a cleanup is
 --    the kind of thing that looks bad in a review later.
+--
+--    01_audit_policy.sql names its policies SOPULI_CDB_* in CDB$ROOT and
+--    SOPULI_* elsewhere. keep_audit=N drops every policy named SOPULI_, so do
+--    not give a policy of the estate's own a name with that prefix. A PDB also
+--    sees the root's common policies, and cannot drop them, so outside the root
+--    the SOPULI_CDB_* names are left out. In the root, SOPULI_* names are
+--    dropped too, where an older copy of 01_audit_policy.sql created them.
 --------------------------------------------------------------------------------
 BEGIN
   IF UPPER('&keep_audit') = 'Y' THEN
-    DBMS_OUTPUT.PUT_LINE('leaving audit policies SOPULI_POL / SOPULI_LOGON_POL in place');
+    DBMS_OUTPUT.PUT_LINE('leaving the SOPULI_ audit policies in place');
   ELSE
     -- NOAUDIT must name the same principal the AUDIT named. An unqualified
     -- `NOAUDIT POLICY p` does NOT lift an enablement made `BY <user>` -- it
     -- reports success and leaves the policy enabled, and the DROP below then
-    -- fails with ORA-46361. 01_audit_policy.sql enables sopuli_logon_pol
-    -- `BY &svc_user`, so this is the ordinary case rather than a corner.
+    -- fails with ORA-46361. 01_audit_policy.sql enables its logon policies
+    -- `BY` an account, so this is the ordinary case rather than a corner.
     --
     -- `entity_name = 'ALL USERS'` is how the view spells a global enablement;
-    -- anything else is a real account and has to be named back.
+    -- anything else is a real account and has to be named back. It is quoted,
+    -- because a common account's name starts with C##.
     FOR p IN (SELECT DISTINCT policy_name, entity_name
                 FROM audit_unified_enabled_policies
-               WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL')) LOOP
+               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
+                 AND ('&in_root' = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
       IF p.entity_name = 'ALL USERS' THEN
         EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
       ELSE
         EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name
-                       || ' BY ' || p.entity_name;
+                       || ' BY ' || DBMS_ASSERT.ENQUOTE_NAME(p.entity_name, FALSE);
       END IF;
     END LOOP;
     FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
-               WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL')) LOOP
+               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
+                 AND ('&in_root' = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
       EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
       DBMS_OUTPUT.PUT_LINE('dropped audit policy ' || p.policy_name);
     END LOOP;
@@ -131,9 +172,10 @@ SELECT grantee, privilege FROM dba_sys_privs WHERE grantee = UPPER('&svc_user');
 SELECT grantee, owner, table_name, privilege FROM dba_tab_privs
  WHERE grantee = UPPER('&svc_user');
 
-PROMPT --- audit policies still present (both if keep_audit=Y, none if N)
+PROMPT --- audit policies still present (all if keep_audit=Y; with N, none here,
+PROMPT --- though a PDB still sees the root's SOPULI_CDB_* policies)
 SELECT DISTINCT policy_name FROM audit_unified_policies
- WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL');
+ WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\';
 
 PROMPT --- audit history is retained in UNIFIED_AUDIT_TRAIL regardless
 SELECT COUNT(*) AS retained_alter_user_events

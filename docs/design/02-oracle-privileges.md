@@ -1241,13 +1241,36 @@ The check reads `ENABLED_OPTION` and `ENTITY_NAME`, which the probe measured on
 `unknown` with a detail that says so. That is not measured on any release
 either.
 
-On a PDB install, the two policies that `01_audit_policy.sql` creates give
-`false`. `sopuli_pol` covers `ALTER USER` for every user. `sopuli_logon_pol`
-does not cover `LOGON`: it records only failed logons, and only the service
-account's. An estate that wants `true` also enables a policy with
-`ACTIONS LOGON` for its personal accounts. On a `COMMON` install the script runs
-in `CDB$ROOT`, and the value a PDB's reset gets from those policies is not
-measured.
+**What `01_audit_policy.sql` creates.** The script creates different policies
+in `CDB$ROOT` and in other containers, because a policy covers different
+accounts in each. `13_audit_coverage_probe.sql` AC8 and AC9 measured this:
+
+| Where it runs | Policies | What they record |
+|---|---|---|
+| a PDB, or a non-CDB | `sopuli_pol`, `sopuli_logon_pol`, and `sopuli_person_logon_pol` when it is given a list of personal accounts | in that container: every account's `ALTER USER`, common accounts too; the service account's failed logons; the listed accounts' successful logons |
+| `CDB$ROOT` | `sopuli_cdb_pol`, `sopuli_cdb_logon_pol` and `sopuli_cdb_person_logon_pol`, created `CONTAINER = ALL` | the same, in every container, for common accounts only |
+
+A policy created in `CDB$ROOT` without `CONTAINER = ALL` records nothing in a
+PDB, not even the service account's `ALTER USER`. So the script never creates
+one there, and it drops one that an older copy of the script created. A
+`COMMON` install runs the script in the root, and also in each PDB that has
+local DBAs or local personal accounts. Without the PDB run, a local DBA's
+`ALTER USER` in that PDB is not recorded.
+
+The root's names differ from a PDB's because a common policy and a PDB's own
+policy may have one name (AC10). The check reads policies by name, so it would
+merge the two.
+
+For a reset in a PDB, the value depends on which run's list names the person:
+
+- `true` where the script ran in the PDB with the person in that run's list.
+  `sopuli_pol` covers `ALTER USER` for every user, and
+  `sopuli_person_logon_pol` covers the person's `LOGON`;
+- `unknown` where no PDB run names the person and the root's list does,
+  because the check reads a common policy as *might cover*;
+- `false` where neither list names the person. No policy records the person's
+  logon or might record it: `sopuli_logon_pol` and `sopuli_cdb_logon_pol`
+  record only the service account's failed logons.
 
 ---
 

@@ -25,12 +25,41 @@
 --         (C##SOPULI_SVC), with AUDIT_TRAIL = DB,EXTENDED set first -- this
 --         image ships NONE, like the gvenzl ones.
 --
+--         The per-container policies and the personal-account list were
+--         confirmed on 26ai Free 23.26.2.0.0 (2026-10-17, #812) through
+--         tests/driver/test_oracle_install_script.py, in CDB$ROOT and in
+--         FREEPDB1. The runs above on other releases were made before them,
+--         and those releases are untried with them.
+--
 -- The service account holds ALTER USER, which has no object scope. Unified
 -- auditing is therefore not housekeeping — it is the compensating control for
 -- the privilege model. Enable it before the first rotation.
 --
--- Run in the same container as 00_install.sql. For a COMMON install, run in
--- CDB$ROOT.
+-- Where to run it. The script creates different policies in CDB$ROOT and in
+-- other containers, because a policy covers different accounts in each
+-- (13_audit_coverage_probe.sql AC8 and AC9):
+--
+--   CDB$ROOT         common policies, CONTAINER = ALL, named SOPULI_CDB_*.
+--                    They record common accounts in every container: the
+--                    service account, and common personal accounts. They
+--                    record no local account
+--   a PDB, non-CDB   local policies, named SOPULI_*. They record every
+--                    account in that container, common accounts too
+--
+-- A policy created in CDB$ROOT without CONTAINER = ALL records nothing in a
+-- PDB, so the script never creates one there. It drops a root policy that an
+-- older copy of this script created that way.
+--
+--   NONCDB or PDB install   run it once, in the same container as
+--                           00_install.sql
+--   COMMON install          run it in CDB$ROOT. Also run it in each PDB that
+--                           has local DBAs or local personal accounts,
+--                           passing C##SOPULI_SVC. Without that run, a local
+--                           DBA's ALTER USER in the PDB is not recorded
+--
+-- The names differ between the root and a PDB because a common policy and a
+-- PDB's own policy may have one name (AC10). A check by name would then find
+-- the common one and skip creating the PDB's own.
 --------------------------------------------------------------------------------
 
 SET SERVEROUTPUT ON
@@ -45,10 +74,19 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --------------------------------------------------------------------------------
 -- Parameters
 --
---   @01_audit_policy.sql [svc_user]
+--   @01_audit_policy.sql [svc_user] [personal_accounts]
 --
---   1 svc_user   the account 00_install.sql created. Defaults to the COMMON
---                name; pass SOPULI_SVC for a NONCDB or PDB install.
+--   1 svc_user           the account 00_install.sql created. Defaults to the
+--                        COMMON name; pass SOPULI_SVC for a NONCDB or PDB
+--                        install.
+--   2 personal_accounts  optional. A comma-separated list of the personal
+--                        accounts the tool resets, such as
+--                        ACME_DEV_ALICE,ACME_DEV_BOB. The script then also
+--                        records their successful logons (section 3). In
+--                        CDB$ROOT, name common accounts. In another container,
+--                        name the accounts that log on there, local or common.
+--                        Every name must be an existing account. Running again
+--                        with a longer list adds only the new names.
 --
 -- The zero-row SELECT is not decoration: SQL*Plus PROMPTS for an `&1` that was
 -- never supplied, and a prompt in a piped run reads the next line of the script
@@ -57,9 +95,11 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --------------------------------------------------------------------------------
 SET TERMOUT OFF
 COLUMN 1 NEW_VALUE 1
-SELECT NULL AS "1" FROM dual WHERE 1 = 0;
+COLUMN 2 NEW_VALUE 2
+SELECT NULL AS "1", NULL AS "2" FROM dual WHERE 1 = 0;
 COLUMN p_user NEW_VALUE svc_user NOPRINT
-SELECT NVL('&1', 'C##SOPULI_SVC') AS p_user FROM dual;
+COLUMN p_persons NEW_VALUE persons NOPRINT
+SELECT NVL('&1', 'C##SOPULI_SVC') AS p_user, '&2' AS p_persons FROM dual;
 SET TERMOUT ON
 
 --------------------------------------------------------------------------------
@@ -105,6 +145,25 @@ END;
 /
 
 --------------------------------------------------------------------------------
+-- Which container this is, and so which policies to create
+--
+-- CON_NAME is safe to read here: it raises ORA-02003 only on 11.2, and section
+-- 0 has already stopped there. A non-CDB answers its own name.
+--------------------------------------------------------------------------------
+SET TERMOUT OFF
+COLUMN p_pfx  NEW_VALUE pfx      NOPRINT
+COLUMN p_cont NEW_VALUE cont_all NOPRINT
+COLUMN p_con  NEW_VALUE con_name NOPRINT
+SELECT CASE WHEN SYS_CONTEXT('USERENV','CON_NAME') = 'CDB$ROOT'
+            THEN 'SOPULI_CDB_' ELSE 'SOPULI_' END        AS p_pfx,
+       CASE WHEN SYS_CONTEXT('USERENV','CON_NAME') = 'CDB$ROOT'
+            THEN ' CONTAINER = ALL' ELSE '' END          AS p_cont,
+       SYS_CONTEXT('USERENV','CON_NAME')                 AS p_con
+  FROM dual;
+SET TERMOUT ON
+PROMPT audit policies for container &con_name: &pfx.*
+
+--------------------------------------------------------------------------------
 -- 1. Audit every user-management statement, by anyone
 --
 --    Deliberately not restricted to the service account: the point is to see
@@ -114,20 +173,20 @@ DECLARE
   l_cnt PLS_INTEGER;
 BEGIN
   SELECT COUNT(*) INTO l_cnt FROM audit_unified_policies
-   WHERE policy_name = 'SOPULI_POL';
+   WHERE policy_name = '&pfx.POL';
   IF l_cnt = 0 THEN
     EXECUTE IMMEDIATE
-      'CREATE AUDIT POLICY sopuli_pol ACTIONS ALTER USER, CREATE USER, DROP USER';
-    DBMS_OUTPUT.PUT_LINE('created audit policy SOPULI_POL');
+      'CREATE AUDIT POLICY &pfx.POL ACTIONS ALTER USER, CREATE USER, DROP USER&cont_all';
+    DBMS_OUTPUT.PUT_LINE('created audit policy &pfx.POL');
   ELSE
-    DBMS_OUTPUT.PUT_LINE('audit policy SOPULI_POL already exists');
+    DBMS_OUTPUT.PUT_LINE('audit policy &pfx.POL already exists');
   END IF;
 
   SELECT COUNT(*) INTO l_cnt FROM audit_unified_enabled_policies
-   WHERE policy_name = 'SOPULI_POL';
+   WHERE policy_name = '&pfx.POL';
   IF l_cnt = 0 THEN
-    EXECUTE IMMEDIATE 'AUDIT POLICY sopuli_pol';
-    DBMS_OUTPUT.PUT_LINE('enabled SOPULI_POL');
+    EXECUTE IMMEDIATE 'AUDIT POLICY &pfx.POL';
+    DBMS_OUTPUT.PUT_LINE('enabled &pfx.POL');
   END IF;
 END;
 /
@@ -139,31 +198,129 @@ DECLARE
   l_cnt PLS_INTEGER;
 BEGIN
   SELECT COUNT(*) INTO l_cnt FROM audit_unified_policies
-   WHERE policy_name = 'SOPULI_LOGON_POL';
+   WHERE policy_name = '&pfx.LOGON_POL';
   IF l_cnt = 0 THEN
-    EXECUTE IMMEDIATE 'CREATE AUDIT POLICY sopuli_logon_pol ACTIONS LOGON';
-    DBMS_OUTPUT.PUT_LINE('created audit policy SOPULI_LOGON_POL');
+    EXECUTE IMMEDIATE 'CREATE AUDIT POLICY &pfx.LOGON_POL ACTIONS LOGON&cont_all';
+    DBMS_OUTPUT.PUT_LINE('created audit policy &pfx.LOGON_POL');
   END IF;
 END;
 /
-AUDIT POLICY sopuli_logon_pol BY &svc_user WHENEVER NOT SUCCESSFUL;
+AUDIT POLICY &pfx.LOGON_POL BY &svc_user WHENEVER NOT SUCCESSFUL;
 
 --------------------------------------------------------------------------------
--- 3. RELEASE GATE: does the password leak into any trail?
+-- 3. Successful logons by the personal accounts, when a list is given
 --
---    MOVED. The probe lives in 02_password_leak_probe.sql, which supersedes the
---    handful of queries that used to be inlined here. Two copies would drift, and
---    the inlined ones were wrong in ways that mattered: a LIKE against V$SQL puts
---    the canary into V$SQL as part of the probe's own cursor, and neither query
---    reported whether the column it searched was populated at all -- so an empty
---    result read as "clean" when it often meant "nothing was captured".
+--    A DBA who acts as a person logs on through a proxy, DBA[person]. That
+--    logon is the record that names the DBA (11_proxy_connect_probe.sql). A
+--    BY list applies to the account that issues the statement, and the person
+--    issues the logon. So the policy is enabled BY the person: BY the DBA
+--    does not record the proxy logon (13_audit_coverage_probe.sql AC4).
 --
---    See 02_password_leak_probe.sql, and docs/design/04-testing.md §6 gate 2 for
---    the three positions it must be run in.
+--    Only the listed accounts. Enabled for every user, it would record every
+--    session, connection pools included.
+--
+--    Every name is checked before anything is created or enabled.
+--    DBMS_ASSERT.SCHEMA_NAME raises ORA-44001 for a name that is not an
+--    account, so a typing error stops the script with nothing changed, instead
+--    of enabling the names before it and not the names after it.
+--
+--    The list is read in upper case, with white space removed, because that
+--    is how Oracle stores an unquoted account name. An account created with a
+--    quoted lower-case name cannot be listed.
 --------------------------------------------------------------------------------
+DECLARE
+  TYPE t_names IS TABLE OF VARCHAR2(128);
+  l_list  VARCHAR2(4000) := REGEXP_REPLACE(UPPER('&persons'), '[[:space:]]');
+  l_names t_names := t_names();
+  l_name  VARCHAR2(128);
+  l_pos   PLS_INTEGER;
+  l_cnt   PLS_INTEGER;
+BEGIN
+  IF l_list IS NULL THEN
+    DBMS_OUTPUT.PUT_LINE('no personal accounts given: &pfx.PERSON_LOGON_POL left as it is');
+    RETURN;
+  END IF;
+
+  WHILE l_list IS NOT NULL LOOP
+    l_pos := INSTR(l_list, ',');
+    IF l_pos = 0 THEN
+      l_name := l_list;
+      l_list := NULL;
+    ELSE
+      l_name := SUBSTR(l_list, 1, l_pos - 1);
+      l_list := SUBSTR(l_list, l_pos + 1);
+    END IF;
+    IF l_name IS NOT NULL THEN
+      l_names.EXTEND;
+      l_names(l_names.LAST) := DBMS_ASSERT.SCHEMA_NAME(l_name);
+    END IF;
+  END LOOP;
+
+  SELECT COUNT(*) INTO l_cnt FROM audit_unified_policies
+   WHERE policy_name = '&pfx.PERSON_LOGON_POL';
+  IF l_cnt = 0 THEN
+    EXECUTE IMMEDIATE 'CREATE AUDIT POLICY &pfx.PERSON_LOGON_POL ACTIONS LOGON&cont_all';
+    DBMS_OUTPUT.PUT_LINE('created audit policy &pfx.PERSON_LOGON_POL');
+  END IF;
+
+  FOR i IN 1 .. l_names.COUNT LOOP
+    SELECT COUNT(*) INTO l_cnt FROM audit_unified_enabled_policies
+     WHERE policy_name = '&pfx.PERSON_LOGON_POL' AND entity_name = l_names(i)
+       AND success = 'YES';
+    IF l_cnt = 0 THEN
+      EXECUTE IMMEDIATE 'AUDIT POLICY &pfx.PERSON_LOGON_POL BY '
+        || DBMS_ASSERT.ENQUOTE_NAME(l_names(i), FALSE) || ' WHENEVER SUCCESSFUL';
+      DBMS_OUTPUT.PUT_LINE('enabled &pfx.PERSON_LOGON_POL BY ' || l_names(i));
+    ELSE
+      DBMS_OUTPUT.PUT_LINE('&pfx.PERSON_LOGON_POL already enabled BY ' || l_names(i));
+    END IF;
+  END LOOP;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- In CDB$ROOT only: drop the local policies an older copy of this script
+-- created there
+--
+--    They record nothing in a PDB (AC8), so they only looked like a control.
+--    This runs after sections 1 to 3, so a failure while creating the common
+--    policies leaves the old ones in place: the root is never left with
+--    neither. Only the two names the older script created: a policy an estate
+--    added itself under another SOPULI_ name is left alone. NOAUDIT names each
+--    account an enablement was made BY, for the reason 99_uninstall.sql
+--    section 2 gives.
+--------------------------------------------------------------------------------
+BEGIN
+  IF '&con_name' = 'CDB$ROOT' THEN
+    FOR p IN (SELECT DISTINCT policy_name, entity_name
+                FROM audit_unified_enabled_policies
+               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL')) LOOP
+      IF p.entity_name = 'ALL USERS' THEN
+        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
+      ELSE
+        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name
+                       || ' BY ' || DBMS_ASSERT.ENQUOTE_NAME(p.entity_name, FALSE);
+      END IF;
+    END LOOP;
+    FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
+               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL')) LOOP
+      EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
+      DBMS_OUTPUT.PUT_LINE('dropped ' || p.policy_name || ' from CDB$ROOT: '
+        || 'a policy created here without CONTAINER = ALL records nothing in a PDB');
+    END LOOP;
+  END IF;
+END;
+/
 
 --------------------------------------------------------------------------------
 -- 4. Everyday queries
+--
+--    In CDB$ROOT, these read the root's trail only. CDB_UNIFIED_AUDIT_TRAIL
+--    has every container's.
+--
+--    Whether a password leaks into any trail is release gate 2, a separate
+--    probe: 02_password_leak_probe.sql, run in the positions
+--    docs/design/04-testing.md §6 gives.
 --------------------------------------------------------------------------------
 SET LINESIZE 220
 COLUMN dbusername  FORMAT A20
@@ -195,6 +352,15 @@ SELECT event_timestamp, dbusername, return_code, authentication_type
  WHERE dbusername = UPPER('&svc_user')
    AND action_name = 'LOGON'
    AND return_code != 0
+ ORDER BY event_timestamp DESC
+ FETCH FIRST 50 ROWS ONLY;
+
+PROMPT --- proxy logons, last 7 days: DBPROXY_USERNAME is the DBA
+SELECT event_timestamp, dbusername, dbproxy_username, return_code
+  FROM unified_audit_trail
+ WHERE action_name = 'LOGON'
+   AND dbproxy_username IS NOT NULL
+   AND event_timestamp > SYSTIMESTAMP - 7
  ORDER BY event_timestamp DESC
  FETCH FIRST 50 ROWS ONLY;
 
