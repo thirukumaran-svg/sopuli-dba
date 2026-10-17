@@ -2352,6 +2352,17 @@ One document per application is the default (Q7), so the second is common. They 
 from the file rather than from the store, so the answer is available offline and
 is the same on two runs of the same command.
 
+**A shared password has one policy.** Where several bindings resolve to the same
+field and pointer in the same document, they hold one password, and the tool
+refuses the file if they resolve to different policies
+([#830](../decisions/log.md#830)). Two shapes produce it: an `overrides:` entry
+that sets `policy:` for some of the targets, and a second application entry
+that declares the account with the same ref and another policy. One stored
+password cannot follow two policies. `creds generate` could draw it against
+only one, and `creds check` would report it against the other on every run. To
+give targets different policies, give each its own secret, with a target label
+such as `{tenant}` in the ref.
+
 **An application's ref must have somewhere to stage into.** Where the
 store emulates the three stages in payload fields — every backend in P2's table
 but OCI — `pending` and `previous` are keys *beside* the container, so two refs
@@ -3013,6 +3024,9 @@ notices until a rotation.
   `where:` that no target in the expanded estate carries → error, naming the
   key and listing the keys the targets do carry (§2). A value that matches no
   target is allowed
+- bindings that resolve to one password (the same field and pointer in the same
+  document) under different policies → error, naming the account, the ref and
+  each policy with a target it governs (§7)
 - both top-level `accounts:` and `applications:` present → error
 - a secret ref that cannot produce **distinct refs for distinct accounts** → error.
   Concretely: more than one account declared, and neither `{account}`,

@@ -2288,3 +2288,33 @@ the register.
     breaking change this decision avoids.
   - Leave it. #818 refuses only `account` and `accounts` in `where:`, so other
     typos stay silent.
+
+## #830
+
+- **Decided:** 2026-10-17, #830
+- **Question:** Several bindings that resolve to one field and pointer in one
+  document hold one password. An override, or a second application entry, can
+  give them different policies. What happens then?
+- **Decision:** Refuse the file at load, with exit 9, before the repository
+  goes public. The error names the account, the ref, and each policy with a
+  target it governs. The hint says to use one policy, or to give each target its
+  own secret with a target label in the ref.
+- **Why:** One stored password cannot follow two policies. `creds generate`
+  drew one password per binding, and the last draw won, so the stored value
+  followed only the last binding's policy, and nothing said so. `creds check`
+  would then report it against the other policy on every run. The contradiction
+  is in the file, so the file is what is refused, and every verb and
+  `config validate` see it. A config that loads today stops loading, which is
+  cheap only before anyone outside uses the tool. The check uses the stores the
+  file states. A binding whose store comes only from a profile or
+  `SOPULI_VAULT` is not compared with one that names a store, as the
+  stage-collision rule is not.
+- **Rejected:**
+  - Check again once a run has filled in the stores. The run's selectors have
+    already narrowed the bindings by then, so whether it refused would depend
+    on the selection.
+  - Refuse in `creds generate` and `creds rotate` only. The config would still
+    load, and `creds check` would still judge one password by two policies.
+  - Draw one value that satisfies every policy. It cannot work when the
+    policies disagree on an exact length, so that case would still need a
+    refusal.
