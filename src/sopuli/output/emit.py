@@ -37,6 +37,8 @@ from datetime import datetime
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, TextIO
 
+import click
+
 from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.document import to_rfc3339, utc_now
 from sopuli.output.printable import printable
@@ -74,6 +76,19 @@ class RedactingJSONEncoder(json.JSONEncoder):
         if isinstance(o, Enum):
             return o.value
         return super().default(o)
+
+
+def echo_err(text: str, *, color_choice: ColorChoice) -> None:
+    """Write a line to stderr outside the emitter, as the emitter would write it.
+
+    For a plan before a prompt, a hand-over, and the plan of a run that stopped
+    part way. Colour is decided for stderr by the run's own `--color` choice and
+    `NO_COLOR`, and every control character is shown rather than sent (#859),
+    because the text carries lock holders and other text from outside the tool.
+    One function, so the two concerns cannot drift apart between callers.
+    """
+    colour = resolve_color(color_choice, stream=sys.stderr, env=os.environ)
+    click.echo(printable(text, colour=colour), err=True, color=colour)
 
 
 def render_json(document: RunDocument) -> str:

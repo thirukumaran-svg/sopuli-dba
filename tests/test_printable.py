@@ -206,7 +206,7 @@ def test_a_line_for_stderr_is_shown_not_sent(colour: bool, monkeypatch: pytest.M
         echoed.append((message, options.get("color")))
 
     monkeypatch.setattr(click, "echo", echo)
-    monkeypatch.setattr(cli_module, "resolve_color", lambda *_, **__: colour)
+    monkeypatch.setattr("sopuli.output.emit.resolve_color", lambda *_, **__: colour)
     run = SimpleNamespace(emitter=lambda: SimpleNamespace(color_choice=ColorChoice.AUTO))
 
     cli_module._echo_err(paint("plan", Role.HEADING) + f" held by {HOSTILE}", run=run)  # type: ignore[arg-type]

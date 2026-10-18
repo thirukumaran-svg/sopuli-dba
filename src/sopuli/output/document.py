@@ -368,6 +368,15 @@ class RunDocument:
     #: command plans nothing -- ``config show``, ``doctor``, ``lock status`` --
     #: rather than that a planning command declined to say.
     plan: dict[str, Any] | None = None
+    #: The plan as text output renders it, kept for one purpose and never
+    #: serialised (#863). A verb returns its whole output when it finishes, so a
+    #: run that raises after its first change would print only the error. The
+    #: command handler prints this to stderr then, unless ``plan_shown`` says a
+    #: prompt already showed it, so the operator still sees what the run had been
+    #: about to touch.
+    plan_text: str | None = None
+    #: Whether the plan has already gone to stderr, before a prompt.
+    plan_shown: bool = False
     #: The ``lock`` section, on a run that took locks. Same arrangement as
     #: ``config`` and ``policy``: :mod:`sopuli.output.lock_view` owns the shape.
     #: Absent *means* something here rather than merely omitting something -- no

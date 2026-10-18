@@ -2064,6 +2064,11 @@ either. A profile that restricts password reuse is likely to refuse `previous`
 with `ORA-28007`. There the way back is a rollover window opened by the rotation
 itself (§5).
 
+Without `--confirm`, a rollback asks "put the vault's `previous` password back on
+every selected target?" after the plan is built, and prints the plan to stderr
+first. The question names no targets, so the plan is what says which ones it
+reaches.
+
 ---
 
 ## 9. `sopuli creds status`
