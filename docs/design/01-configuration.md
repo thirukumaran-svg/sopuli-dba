@@ -3065,6 +3065,11 @@ notices until a rotation.
   resolves the predicate is where that is caught
 - a duplicate account name inside `personal_accounts:` → error, on the same
   comparison and for the same reason
+- a duplicate account name inside one application's `accounts:` → error,
+  compared with `upper()`, which is how the driver looks a user up. Oracle reads
+  an unquoted `acme_web_user` and `ACME_WEB_USER` as one user, and `{account}`
+  renders each spelling as written, so two spellings would be one user with two
+  secret paths, rotated twice in one run
 - an `overrides` entry patching `accounts` → error. Invariant 5 says selectors
   filter the declared set and cannot extend it, not even under `--force`. A
   patchable `accounts` would be a label match buried in a long file that adds to

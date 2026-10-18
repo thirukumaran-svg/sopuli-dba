@@ -184,18 +184,20 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
     if not accounts:
         raise ConfigError("must declare at least one account", at=at.key("accounts"))
 
+    # A duplicate would rotate one user twice in a run, which two password changes
+    # in quick succession can turn into a lockout under PASSWORD_REUSE rules.
+    # Compared with `upper()`, the driver's own lookup (#854): Oracle reads an
+    # unquoted `acme_web_user` and `ACME_WEB_USER` as one user.
     seen: dict[str, int] = {}
     for index, account in enumerate(accounts):
-        if account in seen:
-            # Harmless today and not harmless later: a duplicate would rotate the
-            # same account twice in one run, which two password changes in quick
-            # succession can turn into a lockout under PASSWORD_REUSE rules.
+        user = account.upper()
+        if user in seen:
             raise ConfigError(
                 f"duplicate account {account!r}",
                 at=at.key("accounts").index(index),
-                hint=f"already declared at index {seen[account]}",
+                hint=f"already declared at index {seen[user]} as {accounts[seen[user]]!r}",
             )
-        seen[account] = index
+        seen[user] = index
     return accounts
 
 
