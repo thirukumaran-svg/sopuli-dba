@@ -5,7 +5,8 @@ Which file, and whether there are several, is
 the steps have to happen:
 
 1. the file exists
-2. nobody else can get at it (P4 -- see :mod:`sopuli.config.permissions`)
+2. nobody else can get at it, and on POSIX the effective user or root owns it
+   (P4 -- see :mod:`sopuli.config.permissions`)
 3. it decodes as UTF-8
 4. it parses as YAML, under the hardened loader
 5. the root is a mapping
@@ -23,11 +24,15 @@ schema layer can be tested without touching a filesystem at all
 
 The permission check runs *before* the read, not after. Reading first would mean
 the contents of a file we are about to refuse are already in the process, and
-the ordering is the only thing that makes the refusal mean anything.
+the ordering is the only thing that makes the refusal mean anything. The file is
+opened first and checked through that descriptor, so the file checked is the
+file read.
 """
 
 from __future__ import annotations
 
+import contextlib
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -119,7 +124,6 @@ def load_document(path: Path) -> dict[str, Any]:
             hint="point --config at the file itself, not the directory holding it",
         )
 
-    check_permissions(path)
     document = _require_mapping(parse_yaml(_read(path), source=path), path)
     _require_supported_version(document, path)
     return document
@@ -391,8 +395,16 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
 
 
 def _read(path: Path) -> str:
+    """Check the file and read it, through one open descriptor.
+
+    On POSIX the checks test the descriptor's ``fstat``, so a file renamed over
+    the path after the check is not the one read. Windows walks the ACL by path.
+    """
     try:
-        return path.read_text(encoding=ENCODING)
+        with path.open("rb") as handle:
+            check_permissions(path, owner=True, status=os.fstat(handle.fileno()))
+            data = handle.read()
+        return data.decode(ENCODING)
     except UnicodeDecodeError as error:
         raise ConfigError(
             f"config file is not valid UTF-8 (byte {error.start})",
@@ -400,6 +412,11 @@ def _read(path: Path) -> str:
             hint="save the file as UTF-8",
         ) from error
     except OSError as error:
+        # A file this user cannot open may be one the checks would refuse, and
+        # their refusal says what to fix. Nothing has been read, so checking by
+        # path here costs nothing.
+        with contextlib.suppress(OSError):
+            check_permissions(path, owner=True)
         raise ConfigError(
             f"cannot read the config file: {error.strerror or error}",
             source=path,

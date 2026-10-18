@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from sopuli.config.errors import ConfigError
+from sopuli.config.loading import load_document
 from sopuli.config.permissions import check_permissions
 
 posix_only = pytest.mark.skipif(
@@ -89,6 +90,107 @@ def test_execute_only_is_still_refused(config_file: Path) -> None:
 
     with pytest.raises(ConfigError):
         check_permissions(config_file)
+
+
+@pytest.fixture
+def another_user(config_file: Path, monkeypatch: pytest.MonkeyPatch) -> int:
+    """Run as a uid that does not own ``config_file``, and return the owner's.
+
+    Making a file another user owns needs root, so the effective user is
+    replaced instead: the file is real, the uid compared with it is not.
+    """
+    config_file.chmod(0o600)
+    owner = config_file.stat().st_uid
+    monkeypatch.setattr(os, "geteuid", lambda: owner + 1 if owner != 0 else 1000)
+    return owner
+
+
+@posix_only
+def test_a_file_the_effective_user_owns_is_accepted(config_file: Path) -> None:
+    config_file.chmod(0o600)
+    check_permissions(config_file, owner=True)
+
+
+@posix_only
+def test_a_file_owned_by_another_user_is_refused(config_file: Path, another_user: int) -> None:
+    """Mode 0600 does not help: the other user can still rewrite the file."""
+    with pytest.raises(ConfigError) as caught:
+        check_permissions(config_file, owner=True)
+
+    message = str(caught.value)
+    assert "config file is owned by another user" in message
+    assert f"uid {another_user}" in message, "the message must name the owner"
+    assert "chown" in message
+    assert "sudo" in message, "the hint must say why sudo refuses a file you own"
+
+
+@posix_only
+def test_the_owner_is_checked_only_when_asked(config_file: Path, another_user: int) -> None:
+    """The token file and the wallet survey do not ask: see the docstring."""
+    check_permissions(config_file)
+
+
+@posix_only
+def test_a_file_root_owns_is_accepted(config_file: Path, another_user: int) -> None:
+    """``sudo sopuli`` reads a config under /etc that root owns.
+
+    The exemption matters only when sopuli runs as root: a root-owned file that
+    passes the mode check is ``0600``, so no other user can open it. A
+    root-owned file cannot be made without root, so the status says so.
+    """
+    root_owned = os.stat_result((0o100600, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+    check_permissions(config_file, owner=True, status=root_owned)
+
+
+@posix_only
+def test_the_status_given_is_the_one_checked(config_file: Path) -> None:
+    """The loader passes the open descriptor's ``fstat``, not the path's."""
+    config_file.chmod(0o600)
+    wider = os.stat_result((0o100644, 0, 0, 1, config_file.stat().st_uid, 0, 0, 0, 0, 0))
+
+    with pytest.raises(ConfigError, match="mode 0644"):
+        check_permissions(config_file, status=wider)
+
+
+@posix_only
+def test_the_loader_refuses_a_file_owned_by_another_user(
+    config_file: Path, another_user: int
+) -> None:
+    with pytest.raises(ConfigError, match="owned by another user"):
+        load_document(config_file)
+
+
+@posix_only
+def test_the_loader_checks_the_descriptor_it_reads(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The path is 0600 and the descriptor says 0644, so only the descriptor
+    can be the source of the refusal."""
+    config_file.chmod(0o600)
+    wider = os.stat_result((0o100644, 0, 0, 1, config_file.stat().st_uid, 0, 0, 0, 0, 0))
+    monkeypatch.setattr(os, "fstat", lambda _fd: wider)
+
+    with pytest.raises(ConfigError, match="mode 0644"):
+        load_document(config_file)
+
+
+@posix_only
+@pytest.mark.skipif(
+    sys.platform != "win32" and os.getuid() == 0, reason="root can open a mode 000 file"
+)
+def test_a_file_that_cannot_be_opened_still_gets_the_owner_refusal(
+    config_file: Path, another_user: int
+) -> None:
+    """The refusal says what to fix, where "permission denied" would not."""
+    config_file.chmod(0o000)
+
+    with pytest.raises(ConfigError, match="owned by another user"):
+        load_document(config_file)
+
+
+@windows_only
+def test_the_owner_check_is_posix_only(locked_down: Path) -> None:
+    check_permissions(locked_down, owner=True)
 
 
 # ----------------------------------------------------------------- Windows ---

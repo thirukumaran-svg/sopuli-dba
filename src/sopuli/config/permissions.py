@@ -32,6 +32,7 @@ is its own module:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -53,7 +54,13 @@ POSIX_HINT = "chmod 600 the file, or move it somewhere only you can reach"
 WINDOWS_HINT = 'remove the extra grant, e.g. icacls "<file>" /inheritance:r /grant:r "%USERNAME%:R"'
 
 
-def check_permissions(path: Path, *, what: str = "config file") -> None:
+def check_permissions(
+    path: Path,
+    *,
+    what: str = "config file",
+    owner: bool = False,
+    status: os.stat_result | None = None,
+) -> None:
     """Raise :class:`ConfigError` unless only the owner can reach ``path``.
 
     "Owner" is joined by the platform's own administrative identities, which can
@@ -66,15 +73,61 @@ def check_permissions(path: Path, *, what: str = "config file") -> None:
     fixed string because the second caller guards a token file rather than the
     config, and "config file is accessible to others" pointing at
     ``~/.vault-token`` would send somebody to edit the wrong file.
+
+    ``owner=True`` also refuses, on POSIX, a file that neither the effective
+    user nor root owns. The mode check cannot see that case: the owner of a
+    ``0600`` file can still rewrite it, and ``sudo sopuli`` in a directory
+    another user controls would read that user's ``./sopuli.yaml``. Only the
+    config loader asks for it. A wallet is often owned by the ``oracle`` user,
+    and a token file under ``sudo`` by the invoking user. On Windows the owner
+    is accepted, as the ACL walk always has.
+
+    ``status`` is the file's ``os.fstat`` result, from a caller that has the
+    file open and reads from that descriptor. The POSIX checks then test the
+    file that is read, not whatever the path names a moment later. Without it
+    the path is stat'ed.
     """
     if sys.platform == "win32":
         _check_windows_acl(path, what)
-    else:
-        _check_posix_mode(path, what)
+        return
+    if status is None:
+        status = path.stat()
+    if owner:
+        _check_posix_owner(path, what, status)
+    _check_posix_mode(path, what, status)
 
 
-def _check_posix_mode(path: Path, what: str) -> None:
-    mode = path.stat().st_mode & 0o777
+def _check_posix_owner(path: Path, what: str, status: os.stat_result) -> None:
+    if sys.platform == "win32":  # pragma: no cover - the caller is POSIX only
+        return
+    euid = os.geteuid()
+    if status.st_uid in (euid, 0):
+        return
+    raise ConfigError(
+        f"{what} is owned by another user, {_user_name(status.st_uid)};"
+        f" sopuli is running as {_user_name(euid)}",
+        source=path,
+        hint=(
+            "run sopuli as the file's owner, or chown the file to the user that runs it; "
+            "under sudo the user is root, so a file you own is refused there too"
+        ),
+    )
+
+
+def _user_name(uid: int) -> str:
+    """``name (uid N)``, or ``uid N`` for a uid with no passwd entry."""
+    if sys.platform == "win32":  # pragma: no cover - the caller is POSIX only
+        return f"uid {uid}"
+    import pwd
+
+    try:
+        return f"{pwd.getpwuid(uid).pw_name} (uid {uid})"
+    except KeyError:
+        return f"uid {uid}"
+
+
+def _check_posix_mode(path: Path, what: str, status: os.stat_result) -> None:
+    mode = status.st_mode & 0o777
     offending = mode & GROUP_AND_OTHER
     if offending:
         raise ConfigError(

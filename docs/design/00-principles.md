@@ -693,7 +693,7 @@ equivalent.
 | Concern | Linux/macOS | Windows |
 |---|---|---|
 | Config path | XDG / `/etc/sopuli` | `%APPDATA%` / `%PROGRAMDATA%` |
-| Config permission check | refuse on any `0o077` bit — group/world access of any kind, not only read | walk the DACL; refuse any ACE granting read *or write* to a SID outside {owner, `OWNER RIGHTS`, `CREATOR OWNER`, `SYSTEM`, `Administrators`} |
+| Config permission check | refuse on any `0o077` bit — group/world access of any kind, not only read — and on an owner other than the effective user or root | walk the DACL; refuse any ACE granting read *or write* to a SID outside {owner, `OWNER RIGHTS`, `CREATOR OWNER`, `SYSTEM`, `Administrators`} |
 | Secret in memory | best-effort zeroing, documented as best-effort | same |
 | Path handling | never string-concatenate paths | same |
 | Line endings | write LF, read LF/CRLF | same |

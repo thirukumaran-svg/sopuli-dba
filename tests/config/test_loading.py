@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -214,16 +215,36 @@ def test_permissions_are_checked_before_the_file_is_read(
     path.write_text(MINIMAL, encoding="utf-8")
     order: list[str] = []
 
-    def refuse(_: Path) -> None:
+    def refuse(*_args: object, **_kwargs: object) -> None:
         order.append("permissions")
         raise ConfigError("nope")
 
-    def record_read(*_args: object, **_kwargs: object) -> str:
-        order.append("read")
-        return ""
+    real_open = Path.open
+
+    class RecordingHandle:
+        """The real handle, with its `read` recorded."""
+
+        def __init__(self, real: Any) -> None:
+            self.real = real
+
+        def __enter__(self) -> RecordingHandle:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            self.real.close()
+
+        def fileno(self) -> int:
+            return int(self.real.fileno())
+
+        def read(self) -> bytes:
+            order.append("read")
+            return bytes(self.real.read())
+
+    def recording_open(self: Path, *args: Any, **kwargs: Any) -> RecordingHandle:
+        return RecordingHandle(real_open(self, *args, **kwargs))
 
     monkeypatch.setattr("sopuli.config.loading.check_permissions", refuse)
-    monkeypatch.setattr(Path, "read_text", record_read)
+    monkeypatch.setattr(Path, "open", recording_open)
 
     with pytest.raises(ConfigError):
         load_document(path)
