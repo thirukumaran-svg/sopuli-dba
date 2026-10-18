@@ -28,8 +28,9 @@ keeps the builders provably unable to reach a credential.
 
 from __future__ import annotations
 
+import contextlib
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from sopuli.config.errors import ROOT, ConfigError
@@ -186,13 +187,13 @@ def _from_token_file(path: Path, *, where: str) -> Secret:
     P4's own case for the config file: the person reading the message is the one
     who can fix it, here, now.
 
-    **Checked after reading, not before.** The check asks whether *others* can
-    read the file, never whether we may -- so establishing that the file is there
-    first costs nothing and buys the precise message ``_from_file`` already has
-    for missing, empty, non-UTF-8 and unreadable. Asking ``path.exists()`` first
-    would answer those worse and open a window between the question and the read
-    besides. The secret is in memory either way; what the refusal prevents is
-    *using* it.
+    **Checked through the open file, before it is read** (#885). The file is
+    opened once, the check tests the descriptor's ``fstat``, and only a file that
+    passes is read. A refused token never enters the process, and a file renamed
+    over the path after the check is not the one read. Opening first keeps the
+    precise messages ``_from_file`` has for a missing file, a directory and an
+    unreadable file. On Windows the ACL is still read by path, as P4's check does
+    for the config file.
 
     **The refusal names the file**, in this module's own shape rather than P4's:
     the path as the operator wrote it goes in the message, and what it expanded
@@ -206,21 +207,23 @@ def _from_token_file(path: Path, *, where: str) -> Secret:
     four the run had in force.
     """
     wrote = str(path)
-    secret = _from_file(path, where=where, wrote=wrote)
     resolved = path.expanduser()
-    try:
-        check_permissions(resolved, what=f"the token file {wrote}")
-    except ConfigError as error:
-        raise MaterialError(
-            f"{where}: {error.message}",
-            at=ROOT,
-            hint="; ".join(
-                part
-                for part in (error.hint, f"{TOKEN_FLAG} named it, looked in {resolved}")
-                if part
-            ),
-        ) from error
-    return secret
+
+    def check(status: os.stat_result) -> None:
+        try:
+            check_permissions(resolved, what=f"the token file {wrote}", status=status)
+        except ConfigError as error:
+            raise MaterialError(
+                f"{where}: {error.message}",
+                at=ROOT,
+                hint="; ".join(
+                    part
+                    for part in (error.hint, f"{TOKEN_FLAG} named it, looked in {resolved}")
+                    if part
+                ),
+            ) from error
+
+    return _from_file(path, where=where, wrote=wrote, check=check)
 
 
 def _from_env(name: str, *, env: Mapping[str, str], where: str) -> Secret:
@@ -240,18 +243,27 @@ def _from_env(name: str, *, env: Mapping[str, str], where: str) -> Secret:
     return Secret(value)
 
 
-def _from_file(path: Path, *, where: str, wrote: str) -> Secret:
+def _from_file(
+    path: Path,
+    *,
+    where: str,
+    wrote: str,
+    check: Callable[[os.stat_result], None] | None = None,
+) -> Secret:
     """Read one file, and say precisely which way it failed.
 
     ``wrote`` is what the config says rather than what it expanded to, so the
     message can quote the line the operator typed while the hint shows where it
     looked.
 
-    **No permission check.** ``sopuli/config/permissions.py`` guards the *config
-    file* under P4, because the tool chose where that lives and reads it on every
-    invocation. This path is somebody else's: a Kubernetes projected token is
-    mounted 0644 by the platform, and refusing to read it would break a method P2
-    lists. The asymmetry is deliberate and `01-configuration.md` §3a says so.
+    **No permission check of its own.** ``sopuli/config/permissions.py`` guards
+    the *config file* under P4, because the tool chose where that lives and reads
+    it on every invocation. This path is somebody else's: a Kubernetes projected
+    token is mounted 0644 by the platform, and refusing to read it would break a
+    method P2 lists. The asymmetry is deliberate and `01-configuration.md` §3a
+    says so. ``check`` is for the one caller that does check,
+    :func:`_from_token_file`: it gets the open file's ``fstat`` before anything
+    is read, and raises to refuse it.
     """
     resolved = path.expanduser()
     try:
@@ -263,7 +275,11 @@ def _from_file(path: Path, *, where: str, wrote: str) -> Secret:
         # nowhere while the file on disk looked exactly right. Reading bytes is
         # also what makes the newline handling below mean what it says, rather
         # than being dead code the decoder had already run.
-        text = resolved.read_bytes().decode("utf-8")
+        with resolved.open("rb") as handle:
+            if check is not None:
+                check(os.fstat(handle.fileno()))
+            data = handle.read()
+        text = data.decode("utf-8")
     except FileNotFoundError as error:
         raise MaterialError(
             f"{where}: no file at {wrote}", at=ROOT, hint=f"looked in {resolved}"
@@ -280,6 +296,12 @@ def _from_file(path: Path, *, where: str, wrote: str) -> Secret:
             f"{where}: {wrote} is not UTF-8 text", at=ROOT, hint=f"looked in {resolved}"
         ) from error
     except OSError as error:
+        if check is not None:
+            # A file this user cannot open may be one the check would refuse, and
+            # its refusal says what to fix. Nothing has been read, so checking by
+            # path here costs nothing. `config/loading.py` does the same.
+            with contextlib.suppress(OSError):
+                check(resolved.stat())
         raise MaterialError(
             f"{where}: could not read {wrote}: {error.strerror or error}",
             at=ROOT,

@@ -1027,7 +1027,10 @@ reason for it:
   **`--vault-token-file` is the one exception**: it is a bearer token at a path
   the operator typed for *this* run, so it gets P4's check and refuses when
   anyone else can reach the file — the same reasoning P4 itself gives, that the
-  person reading the message is the one who can fix it, here, now. The
+  person reading the message is the one who can fix it, here, now. The file is
+  opened once and checked before it is read, so a refused token never enters the
+  process. On POSIX the check reads that descriptor's mode; on Windows it reads
+  the file's ACL by path, as it does for the config file. The
   `~/.vault-token` fallback stays unchecked with the config form: it is Vault's
   own file, written 0600 by `vault login`, and refusing the file another tool
   just wrote would refuse the bootstrap ADR-007 names as the answer for a human
