@@ -83,6 +83,21 @@ def test_a_duplicate_account_is_refused_and_points_at_both() -> None:
     assert "already declared at index 0" in rendered
 
 
+def test_two_spellings_of_one_account_are_a_duplicate() -> None:
+    """#854. Oracle reads both as the user `ACME_WEB_USER`, and `{account}`
+    renders each spelling as written: one user, two secret paths, rotated
+    twice in one run."""
+    with pytest.raises(ConfigError) as caught:
+        build_applications(
+            named(accounts=["acme_web_user", "ACME_WEB_USER"], secret_template=TEMPLATE)
+        )
+
+    rendered = str(caught.value)
+    assert "duplicate account 'ACME_WEB_USER'" in rendered
+    assert "applications[0].accounts[1]" in rendered
+    assert "already declared at index 0 as 'acme_web_user'" in rendered
+
+
 # ------------------------------------------------- per-account settings (C4) ---
 
 
