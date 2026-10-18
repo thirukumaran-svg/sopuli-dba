@@ -1982,7 +1982,10 @@ consumer that already branches on `config` handles it without a change.
 One rule, enforced in one place: **redaction happens at the serialiser, not at
 each call site.** Every secret value the process holds is wrapped in a type whose
 serialisation is the literal string `"***"`, and whose `__str__` and `__repr__`
-are the same. No call site can emit a secret by forgetting a helper.
+are the same. No call site can emit a secret by forgetting a helper. The type
+has no length, and pickling it raises `TypeError`, so `len()` and a pickle do
+not give out the value. It still compares and hashes by value, so code in the
+process can test a guess against it; nothing outside the process can.
 
 A password, or a credential that retrieves one, leaves the process only at the
 sites `CLAUDE.md` invariant 2 lists:
