@@ -479,8 +479,7 @@ def test_a_skip_that_holds_the_promotion_back_prints_its_remedy_and_no_repair_li
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """The run's own `repair with:` line would name a run that skips the same
-    pair again, so W050 carries the remedy. Its `--force` names the document's
-    accounts: a bare `--force` waives the guardrails for the whole estate."""
+    pair again, so W050 carries the remedy, and says what `--force` would cost."""
     estate({}, by_target=DBA_ON_BETA)
     result = run(runner, write_config(TWO_TARGETS))
 
@@ -488,10 +487,58 @@ def test_a_skip_that_holds_the_promotion_back_prints_its_remedy_and_no_repair_li
     assert "a guardrail skipped acme_web_user on appdb-beta, and that target still holds" in (
         result.output
     )
-    assert "creds apply --force --account acme_batch_user --account acme_web_user" in (
-        result.output
-    )
+    assert "waives the guardrails for every account the run selects" in result.output
     assert "repair with:" not in result.output
+
+
+class FailsBatchUserOnBeta(FakeSession):
+    """`acme_batch_user` never confirms on the session that holds `DBA` for
+    `acme_web_user`, which is `appdb-beta`'s."""
+
+    def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        web = self.users.get("ACME_WEB_USER")
+        on_beta = web is not None and "DBA" in web.roles
+        if on_beta and account.upper() == "ACME_BATCH_USER":
+            self.attempts.append(account.upper())
+            return VerifyResult("login", "fail", latency_ms=9)
+        return super().verify_password(account, secret)
+
+
+def test_a_sibling_failure_is_the_reason_before_a_skip(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The same run again may fix a failure, and `--force` is the wrong remedy
+    for it. So the failure holds the document back and W050 is not raised."""
+    harness = estate({}, by_target=DBA_ON_BETA, session=FailsBatchUserOnBeta)
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_a_skip_on_an_account_applied_from_current_holds_nothing_back(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`acme_web_user` has no `pending`, so its skip on beta moves nothing.
+    Keeping it in the gate would block `acme_batch_user` on every run."""
+    harness = estate(
+        {},
+        by_target=DBA_ON_BETA,
+        document={
+            "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+            "pending": {"acme_batch_user": STAGED},
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS))
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] == STAGED
+    assert result.exit_code == ExitCode.SUCCESS
 
 
 class FailsWebUser(FakeSession):

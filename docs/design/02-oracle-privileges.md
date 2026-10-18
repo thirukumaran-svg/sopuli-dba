@@ -854,8 +854,8 @@ These rules apply:
   remove, blocks promotion for every other account at that secret path. Dropping
   it avoids both: its `pending` stays staged, and the other accounts are
   promoted.
-- **An account skipped on some targets and confirmed on others holds its
-  document back** (#852). The checks read each database, so one account can hold
+- **An account skipped on some targets, and confirmed on others with a
+  `pending` to promote, holds its document back** (#852). The checks read each database, so one account can hold
   `DBA` on one target only. Its promotion is one password for all of its
   targets, and the skipped target still holds the old one. The document is not
   promoted, so the run exits 4 with `SOPULI-W050`, which names the skipped pairs
