@@ -33,7 +33,7 @@ from typing import Any
 from sopuli.apply import CONFIRMED, Source, counts, is_confirmed, is_failure, is_inconclusive
 from sopuli.check import ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
-from sopuli.diagnostics import CHANGED_NOT_PROMOTED
+from sopuli.diagnostics import CHANGED_NOT_PROMOTED, PROMOTION_SKIPPED, PROMOTION_WITHHELD
 from sopuli.driver.guardrails import Refusal
 from sopuli.driver.protocol import FAIL, PASS, AttributeChange, VerifyResult
 from sopuli.output.document import Error, Summary
@@ -42,12 +42,42 @@ from sopuli.output.table import Cell, Column, render_table
 from sopuli.payload import CURRENT, PREVIOUS
 
 __all__ = [
+    "HELD_NARROWED",
+    "HELD_SKIPPED",
+    "HELD_UNCONFIRMED",
     "build_result",
     "render_apply",
     "render_source_table",
     "repair_invocation",
     "summarise",
 ]
+
+#: Why a document that owed a promotion was held back without a write (#873):
+#: the run was narrowed past pairs the promotion needs (``SOPULI-W027``), a
+#: guardrail skipped a target the password is for (``SOPULI-W050``), or a
+#: target did not confirm.
+HELD_NARROWED = "narrowed"
+HELD_SKIPPED = "skipped"
+HELD_UNCONFIRMED = "unconfirmed"
+
+#: The `SOPULI-W049` message for a confirmed row in a held-back document, by
+#: cause. Each points at what the run says about the cause, because the remedy
+#: is there and one row cannot see it.
+_HELD_MESSAGES = {
+    HELD_NARROWED: (
+        f"this database has the new password and the vault was not promoted, so `current` "
+        f"still holds the old one -- {PROMOTION_WITHHELD} names the wider run that finishes it"
+    ),
+    HELD_SKIPPED: (
+        f"this database has the new password and the vault was not promoted, so `current` "
+        f"still holds the old one -- {PROMOTION_SKIPPED} names the target a guardrail skipped"
+    ),
+    HELD_UNCONFIRMED: (
+        "this database has the new password and the vault was not promoted, because another "
+        "row of this document did not confirm, so `current` still holds the old one -- "
+        "that row says why, and the same command again finishes it once that is fixed"
+    ),
+}
 
 _ACCOUNT = 24
 _TARGET = 28
@@ -66,6 +96,7 @@ def build_result(
     rollover: dict[str, Any] | None = None,
     promoted_to: int | None = None,
     promotion_error: Error | None = None,
+    held_back: str | None = None,
     mechanism: str | None = None,
     overridden: Sequence[Refusal] = (),
     attributes: Sequence[AttributeChange] = (),
@@ -102,6 +133,10 @@ def build_result(
     ``vault_promote`` action with ``applied: true``, since the write ran, this
     error as its ``error``, and the warning that ``current`` was not promoted.
     Without them a row that is ``IN_SYNC`` would read as a finished rotation.
+
+    ``held_back`` is the same row's other way of not finishing (#873): it
+    confirmed and owed the promotion, and its document was held back without a
+    write, for one of the ``HELD_*`` causes. It gets the warning too.
 
     ``redraws`` is how many *extra* passwords this account was given because the
     server refused the value itself (§6.4) -- over the one the run arrived
@@ -175,6 +210,7 @@ def build_result(
         changed=changed,
         mechanism=mechanism,
         promotion_failed=promotion_error is not None,
+        held_back=held_back,
     )
     if warnings:
         entry["warnings"] = warnings
@@ -323,14 +359,16 @@ def _warnings(
     changed: bool,
     mechanism: str | None,
     promotion_failed: bool = False,
+    held_back: str | None = None,
 ) -> list[dict[str, Any]]:
     """What this run did that somebody should know about.
 
     The one that matters is a **database whose password the vault did not
     promote**: UC-1 §8 calls it the highest-severity row in its table, because
     applications fetch ``current`` and are now fetching a password the database no
-    longer has. It covers a changed row that did not confirm, and any row whose
-    promotion write failed (#805), changed by this run or by an earlier one. It is
+    longer has. It covers a changed row that did not confirm, any row whose
+    promotion write failed (#805), and any confirmed row whose document was held
+    back without a write (#873), changed by this run or by an earlier one. It is
     a warning on the account as well as any run-level diagnostic, so that it
     survives into whatever a consumer filters `results[]` down to.
 
@@ -339,7 +377,17 @@ def _warnings(
     left this process.
     """
     found: list[dict[str, Any]] = []
-    if (changed and outcome.state not in CONFIRMED) or promotion_failed:
+    if held_back is not None:
+        found.append(
+            {
+                "level": "warning",
+                "code": CHANGED_NOT_PROMOTED,
+                "message": _HELD_MESSAGES[held_back],
+                "account": binding.account,
+                "target": binding.target,
+            }
+        )
+    elif (changed and outcome.state not in CONFIRMED) or promotion_failed:
         # A failed promotion write (#805) is reported whether or not this run
         # changed the database: an earlier run may have put the password there.
         # Its remedy depends on the run (a conflict, a lost lock, a rollback, the
@@ -396,11 +444,12 @@ def summarise(states: Sequence[str], *, changed: int, unpromoted: int = 0) -> Su
     is a caveat on a survey, and here it is a target that accepted the password
     and can be promoted on.
 
-    ``unpromoted`` is the confirmed rows whose document's promotion write failed
-    (#805). They move from ``ok`` to ``failed``: the database took the password
-    and `current` still holds the old one, so the run did not finish its work on
-    them. ``by_state`` still counts their state, which is what is true of the
-    database.
+    ``unpromoted`` is the confirmed rows a promotion was for whose document
+    `current` was not moved to: its write failed (#805), or it was held back
+    without a write (#873). They move from ``ok`` to ``failed``: the database
+    took the password and `current` still holds the old one, so the run did not
+    finish its work on them. ``by_state`` still counts their state, which is
+    what is true of the database.
     """
     return Summary(
         total=len(states),

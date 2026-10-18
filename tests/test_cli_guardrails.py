@@ -28,7 +28,12 @@ from sopuli.apply import SKIPPED
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import GUARDRAIL_UNCHECKED, PROMOTION_SKIPPED, WARNINGS
+from sopuli.diagnostics import (
+    CHANGED_NOT_PROMOTED,
+    GUARDRAIL_UNCHECKED,
+    PROMOTION_SKIPPED,
+    WARNINGS,
+)
 from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
@@ -436,6 +441,20 @@ def test_an_account_skipped_on_one_of_its_targets_is_not_promoted(
         one for one in document(result)["diagnostics"] if one.get("code") == PROMOTION_SKIPPED
     ]
     assert "a guardrail skipped acme_web_user on appdb-beta" in skipped["message"]
+    # #873: every row the promotion was for, and that confirmed, says
+    # `current` is stale for it, and the summary counts it failed.
+    stale = [
+        (one["account"], one["target"])
+        for one in document(result)["results"]
+        for warning in one.get("warnings", ())
+        if warning.get("code") == CHANGED_NOT_PROMOTED and PROMOTION_SKIPPED in warning["message"]
+    ]
+    assert sorted(stale) == [
+        ("acme_batch_user", "appdb-alpha"),
+        ("acme_batch_user", "appdb-beta"),
+        ("acme_web_user", "appdb-alpha"),
+    ]
+    assert document(result)["summary"]["ok"] == 0
 
 
 def test_an_account_skipped_on_every_target_does_not_hold_its_neighbours_back(

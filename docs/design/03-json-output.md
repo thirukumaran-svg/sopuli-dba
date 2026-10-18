@@ -1579,11 +1579,21 @@ recoverable from the document, so `--strategy` needed no new field.
 
 **A promotion is reported on every account in the document it promoted**, with
 the version it produced, because they shared one compare-and-set. Where the
-database was changed and the document was *not* promoted, every account involved
-carries a `warning` that says so. Applications read `current`, and until the
+database was changed and the document was *not* promoted, the rows involved
+carry `SOPULI-W049` that says so. Applications read `current`, and until the
 promotion lands they read a password that part of the estate no longer has. That
 is UC-1 §8's highest-severity row. It is a per-result warning, not a run-level
-diagnostic, so it survives any filter a consumer applies to `results[]`.
+diagnostic, so it survives any filter a consumer applies to `results[]`. It goes
+on a changed row that did not confirm, and on every confirmed row the promotion
+was for (its stage was `pending`, or `previous` on a rollback) whose document
+was held back without a write (#873). There are three causes, and the message
+says which: the run was narrowed (`SOPULI-W027`), a guardrail skipped a target
+the password is for (`SOPULI-W050`), or another row of the document did not
+confirm. The summary counts those confirmed rows as `failed`, not `ok`, for the
+reason it counts a failed write's rows that way below. `by_state` still counts
+their state. A document that a lock takeover stopped the run before
+(`SOPULI-W011`) is not reported this way: the run that took the lock may promote
+it, so this run cannot say that `current` is stale.
 
 **A promotion write that fails is reported on the rows, in the summary and as a
 diagnostic.** Every target confirmed, so each row's `state` is still
@@ -1880,7 +1890,7 @@ not contract and may improve.
 | `SOPULI-W046` | `creds generate --overwrite-pending` replaced a `pending` password that was already staged, on a staging run or a `--promote`. Anything holding the old one is now stale. The message names the document version replaced. In `results[].warnings[]` |
 | `SOPULI-W047` | `creds generate --promote --overwrite-current` replaced `current` (decision #257). The vault now advertises a password no database has been given, until `creds apply` converges them. A warning, not an error, because the flag is the operator asking for exactly this. In `results[].warnings[]` |
 | `SOPULI-W048` | `creds generate --no-policy-check` accepted a password that violates the policy. One entry per rule violated, naming the rule and the counts, never the characters. In `results[].warnings[]` |
-| `SOPULI-W049` | On one `creds apply` result: `current` may not hold the password this database has, so an application that fetches it may fail to log in. Either the database changed and did not confirm, and `creds apply` again once the target is well fixes it, or the promotion write failed, and `SOPULI-W033` on the run says what to do. The message says which. In `results[].warnings[]`, so it survives a consumer that filters the results |
+| `SOPULI-W049` | On one `creds apply` or `creds rotate` result: `current` may not hold the password this database has, so an application that fetches it may fail to log in. The database changed and did not confirm, and `creds apply` again once the target is well fixes it. Or the promotion write failed, and `SOPULI-W033` on the run says what to do. Or the row confirmed and its document was held back without a write (#873): by a narrowed run (`SOPULI-W027`), by a guardrail skip (`SOPULI-W050`), or because another row of the document did not confirm. The message says which. It is not raised for a document a lock takeover stopped the run before (`SOPULI-W011`): the run that took the lock may promote it. In `results[].warnings[]`, so it survives a consumer that filters the results |
 | `SOPULI-W050` | A secret document was not promoted, because a guardrail skipped one of its accounts on one target and the account confirmed on another, with a `pending` (or, on a rollback, a `previous`) to promote (#852). The guardrails read each database, so one account can hold `DBA` on one target only. The skipped target still holds the old password, so promoting would break invariant 7. `pending` stays and the run exits 4. Raised only when every other target confirmed: a failure is reported as the reason first. It has its own code for `SOPULI-W011`'s reason: the same run again skips the same pair, so the text output prints no `repair with:` line when this is all that held the run back. The remedy is to clear what the guardrail reported on that target and run the same command again. The message names each skipped pair, and says that `--force` overrides the guardrail and waives the guardrails for every account the run selects. It spells out no command, because the right one depends on the verb, the run's options and which accounts a `--force` should reach |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that

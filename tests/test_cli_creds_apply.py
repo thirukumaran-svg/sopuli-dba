@@ -39,6 +39,7 @@ from sopuli.config.loading import build_config
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
+    CHANGED_NOT_PROMOTED,
     LOCK_TAKEN_OVER,
     PRIVILEGE_AUDIT_UNREAD,
     PROFILE_UNREAD,
@@ -2477,6 +2478,56 @@ def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
     assert after["DB_CREDENTIALS"] == {"acme_web_user": LIVE}
     assert after["pending"] == {"acme_web_user": STAGED}
     assert "acme_web_user on appdb-beta" in result.output
+
+
+def _row(result: Result, target: str) -> dict[str, Any]:
+    return next(one for one in document(result)["results"] if one["target"] == target)
+
+
+def test_a_confirmed_row_of_a_narrowed_promotion_says_current_is_stale(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#873. appdb-alpha took the new password and `current` still holds the
+    old one, so its row carries W049, pointing at W027 for the remedy. The
+    summary counts it failed, not ok, as a failed promotion write's row is."""
+    estate(documents=staged())
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--target", "appdb-alpha", "--output", "json")
+
+    (warning,) = _row(result, "appdb-alpha")["warnings"]
+    assert warning["code"] == CHANGED_NOT_PROMOTED
+    assert PROMOTION_WITHHELD in warning["message"]
+    summary = document(result)["summary"]
+    assert (summary["ok"], summary["failed"]) == (0, 1)
+
+
+def test_a_confirmed_row_beside_a_target_that_failed_says_current_is_stale(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#873's third cause: one document, and appdb-beta did not confirm, so
+    appdb-alpha is changed and confirmed while `current` is not moved."""
+    estate(
+        documents=staged(),
+        per_target={
+            "appdb-alpha": {"ACME_WEB_USER": drifted()},
+            "appdb-beta": {
+                "ACME_WEB_USER": [
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                ]
+            },
+        },
+    )
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
+
+    (warning,) = _row(result, "appdb-alpha")["warnings"]
+    assert warning["code"] == CHANGED_NOT_PROMOTED
+    assert "another row of this document did not confirm" in warning["message"]
+    # Both rows failed: beta did not confirm, and alpha confirmed with
+    # `current` left stale. Counted once each.
+    summary = document(result)["summary"]
+    assert (summary["ok"], summary["failed"]) == (0, 2)
 
 
 def test_the_withheld_promotion_names_the_wider_run_as_its_remedy(
