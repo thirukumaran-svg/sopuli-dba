@@ -138,6 +138,7 @@ def refuse_seen_path(
     *,
     is_json: bool,
     stdout_is_terminal: bool,
+    stdin_is_terminal: bool,
     confirm_given: bool,
     preview: bool = False,
 ) -> None:
@@ -167,6 +168,11 @@ def refuse_seen_path(
     Refusing a preview for want of a terminal would make the one thing a CI job
     legitimately wants from this verb impossible: *show me what a reset would do*,
     answered by a refusal about a screen nobody needed.
+
+    **Guard 4 needs stdin to be a terminal as well** (#853). The prompt comes
+    after the DDL and reads stdin. A closed stdin would read end of input after
+    the password was set, so nobody would ever see it, and a pipe such as
+    `yes |` would answer the prompt that no flag may answer.
 
     **Checked before the password exists.** Every one of these is knowable from
     argv and the environment, so finding out after the draw -- or worse, after
@@ -224,6 +230,18 @@ def refuse_seen_path(
                 "logon it is good for, and expiry does not unpublish it. Run this at a "
                 "terminal and read the password off the screen -- `| clip` and `| pbcopy` "
                 "do not work here, deliberately -- or use an unseen delivery method"
+            ),
+        )
+
+    if not stdin_is_terminal:
+        raise RefusedError(
+            "`delivery.method: manual` asks before it shows the password, "
+            "and stdin is not a terminal to answer from",
+            hint=(
+                "the prompt comes after the password is set, so a closed stdin would leave "
+                "a password nobody has seen, and a pipe would answer a prompt no flag may "
+                "answer. Run this at a terminal with nothing redirected into it, or use an "
+                "unseen delivery method"
             ),
         )
 

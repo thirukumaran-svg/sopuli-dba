@@ -20,7 +20,8 @@ Five structural guards, and none of them is a reminder to be careful:
    :func:`build_result`, which has no field for one and never will;
 3. **refused unless stdout is a terminal**, which `--reveal` has no counterpart
    for and which is the guard the whole argument rests on;
-4. **confirmed every time**, and ``--confirm`` cannot answer that prompt;
+4. **confirmed every time, from a terminal**: ``--confirm`` cannot answer that
+   prompt, and neither can a closed or piped stdin;
 5. **``force_expire: true``** required on the method, refused at plan time.
 
 Guards 2 to 4 are :func:`sopuli.reset.refuse_seen_path`'s, guard 5 is the config

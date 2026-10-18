@@ -1250,7 +1250,7 @@ invariant 2 lists it as its fourth exception. The five guards are:
 | one reveal site, in the seen path's view, reachable only when `delivery.method` is `manual` | the exception stays narrow by structure, not by care, as the third exception does |
 | refused with `--output json` and `--output jsonl`; no schema property can hold the value | as `--reveal` already is: a machine-readable document must never carry it |
 | **refused unless stdout is a terminal** | `--reveal` has no such guard, and this is the guard that carries the argument. A value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it. `\| clip` stops working; that cost is accepted |
-| confirmed every time, and `--confirm` does not answer it (§2) | a yes given in advance asserts what the prompt exists to establish |
+| confirmed every time, and `--confirm` does not answer it (§2). Refused unless stdin is a terminal, checked before the password is drawn | a yes given in advance asserts what the prompt exists to establish. The prompt comes after the password is set, so a closed stdin would leave a password nobody has seen, and a pipe such as `yes \|` would give the yes in advance |
 | `force_expire: true` required; a `manual` block without it is refused when the config is loaded (exit 9) | the exposure ends at the person's next logon, or it does not end at all |
 
 **A `--dry-run` is exempt from guards 2 to 4.** A preview prints a plan and never a

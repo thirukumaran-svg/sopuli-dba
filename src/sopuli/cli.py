@@ -2009,6 +2009,7 @@ def account_reset_password(
         delivery,
         is_json=run.is_json,
         stdout_is_terminal=is_a_terminal(sys.stdout),
+        stdin_is_terminal=is_a_terminal(sys.stdin),
         confirm_given=confirm,
         preview=run.dry_run,
     )

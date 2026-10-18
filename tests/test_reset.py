@@ -144,7 +144,9 @@ def test_guard_2_refuses_the_seen_path_with_json_output() -> None:
     """`policy sample --reveal`'s refusal, one verb over, and the same way round:
     the machine-readable format is the safe one, so it wins."""
     with pytest.raises(ArgumentError) as caught:
-        refuse_seen_path(SEEN, is_json=True, stdout_is_terminal=True, confirm_given=False)
+        refuse_seen_path(
+            SEEN, is_json=True, stdout_is_terminal=True, stdin_is_terminal=True, confirm_given=False
+        )
 
     assert "cannot be used with --output json" in str(caught.value)
     assert caught.value.exit_code is ExitCode.USAGE
@@ -155,7 +157,13 @@ def test_guard_3_refuses_the_seen_path_when_stdout_is_not_a_terminal() -> None:
     counterpart for: a value in a log outlives the single logon it is good for,
     and expiry does not unpublish it."""
     with pytest.raises(RefusedError) as caught:
-        refuse_seen_path(SEEN, is_json=False, stdout_is_terminal=False, confirm_given=False)
+        refuse_seen_path(
+            SEEN,
+            is_json=False,
+            stdout_is_terminal=False,
+            stdin_is_terminal=True,
+            confirm_given=False,
+        )
 
     assert "not a terminal" in str(caught.value)
     assert caught.value.exit_code is ExitCode.ABORTED
@@ -189,10 +197,30 @@ def test_guard_4_refuses_confirm_given_in_advance() -> None:
     """The one gate in the tool a yes cannot be given to ahead of time
     (principle P5, decision #439). A flag cannot testify to its own premise."""
     with pytest.raises(ArgumentError) as caught:
-        refuse_seen_path(SEEN, is_json=False, stdout_is_terminal=True, confirm_given=True)
+        refuse_seen_path(
+            SEEN, is_json=False, stdout_is_terminal=True, stdin_is_terminal=True, confirm_given=True
+        )
 
     assert "--confirm cannot answer" in str(caught.value)
     assert caught.value.exit_code is ExitCode.USAGE
+
+
+def test_guard_4_refuses_a_stdin_that_cannot_answer() -> None:
+    """#853. The prompt comes after the DDL and reads stdin. A closed stdin would
+    read end of input after the password was set, so nobody would see it, and
+    `yes |` would answer the prompt no flag may answer. Refused before a password
+    is drawn."""
+    with pytest.raises(RefusedError) as caught:
+        refuse_seen_path(
+            SEEN,
+            is_json=False,
+            stdout_is_terminal=True,
+            stdin_is_terminal=False,
+            confirm_given=False,
+        )
+
+    assert "stdin is not a terminal" in str(caught.value)
+    assert caught.value.exit_code is ExitCode.ABORTED
 
 
 def test_the_usage_errors_are_asked_before_the_environment_one() -> None:
@@ -201,7 +229,13 @@ def test_the_usage_errors_are_asked_before_the_environment_one() -> None:
     console. A script passing `--confirm` has made a mistake in its command line,
     and that is what it should hear about."""
     with pytest.raises(ArgumentError):
-        refuse_seen_path(SEEN, is_json=False, stdout_is_terminal=False, confirm_given=True)
+        refuse_seen_path(
+            SEEN,
+            is_json=False,
+            stdout_is_terminal=False,
+            stdin_is_terminal=True,
+            confirm_given=True,
+        )
 
 
 def test_no_guard_fires_on_an_unseen_delivery() -> None:
@@ -211,14 +245,23 @@ def test_no_guard_fires_on_an_unseen_delivery() -> None:
     wrapping token, and a retrieval credential with its own TTL is a different
     object -- argued in `sopuli/output/delivery_view.py`.
     """
-    refuse_seen_path(UNSEEN, is_json=True, stdout_is_terminal=False, confirm_given=True)
+    refuse_seen_path(
+        UNSEEN, is_json=True, stdout_is_terminal=False, stdin_is_terminal=False, confirm_given=True
+    )
 
 
 def test_no_guard_fires_on_a_dry_run() -> None:
     """A preview prints a plan and never a password (UC-2 §2, invariant 8), so
     there is no emission for any of these to guard -- and refusing one would make
     *show me what this would do* impossible from the CI job that most wants it."""
-    refuse_seen_path(SEEN, is_json=True, stdout_is_terminal=False, confirm_given=True, preview=True)
+    refuse_seen_path(
+        SEEN,
+        is_json=True,
+        stdout_is_terminal=False,
+        stdin_is_terminal=False,
+        confirm_given=True,
+        preview=True,
+    )
 
 
 # --------------------------------------------------------------- the decision ---
