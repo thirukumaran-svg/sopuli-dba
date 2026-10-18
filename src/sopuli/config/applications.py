@@ -184,23 +184,20 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
     if not accounts:
         raise ConfigError("must declare at least one account", at=at.key("accounts"))
 
-    # Compared case-insensitively (#854). Oracle reads an unquoted
-    # `acme_web_user` and `ACME_WEB_USER` as one user, and a selector matches
-    # them as one too, but `{account}` renders the spelling as written, so two
-    # spellings would be one user with two secret paths.
+    # A duplicate would rotate one user twice in a run, which two password changes
+    # in quick succession can turn into a lockout under PASSWORD_REUSE rules.
+    # Compared with `upper()`, the driver's own lookup (#854): Oracle reads an
+    # unquoted `acme_web_user` and `ACME_WEB_USER` as one user.
     seen: dict[str, int] = {}
     for index, account in enumerate(accounts):
-        first = seen.get(account.casefold())
-        if first is not None:
-            # Harmless today and not harmless later: a duplicate would rotate the
-            # same account twice in one run, which two password changes in quick
-            # succession can turn into a lockout under PASSWORD_REUSE rules.
+        user = account.upper()
+        if user in seen:
             raise ConfigError(
                 f"duplicate account {account!r}",
                 at=at.key("accounts").index(index),
-                hint=f"already declared at index {first} as {accounts[first]!r}",
+                hint=f"already declared at index {seen[user]} as {accounts[seen[user]]!r}",
             )
-        seen[account.casefold()] = index
+        seen[user] = index
     return accounts
 
 

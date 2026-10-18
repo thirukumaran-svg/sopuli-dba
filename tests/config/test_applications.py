@@ -98,6 +98,16 @@ def test_two_spellings_of_one_account_are_a_duplicate() -> None:
     assert "already declared at index 0 as 'acme_web_user'" in rendered
 
 
+def test_the_comparison_is_the_drivers_upper() -> None:
+    """`upper()` is how the driver looks a user up, and it is not `casefold()`
+    outside ASCII: `'acme_ıd'.upper()` is `'ACME_ID'`, while their casefolds
+    differ. The rule asks the driver's question, so this is one user."""
+    with pytest.raises(ConfigError) as caught:
+        build_applications(named(accounts=["acme_ıd", "ACME_ID"], secret_template=TEMPLATE))
+
+    assert "duplicate account 'ACME_ID'" in str(caught.value)
+
+
 # ------------------------------------------------- per-account settings (C4) ---
 
 
