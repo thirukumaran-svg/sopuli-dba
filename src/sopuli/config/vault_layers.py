@@ -64,8 +64,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
+from urllib.parse import urlsplit
 
-from sopuli.config.codes import RELAXATION_DEFEATED
+from sopuli.config.codes import RELAXATION_DEFEATED, THIRD_PARTY_ADDR_OVERRIDES
 from sopuli.config.errors import ROOT, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
 from sopuli.config.vault_env import (
@@ -192,6 +193,9 @@ def _merge(
         settings[key] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
+    overridden = _addr_overridden(vault.name, settings.get("addr"))
+    if overridden is not None:
+        warnings.append(overridden)
 
     tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
@@ -221,6 +225,90 @@ def _merge(
         ),
         warnings,
     )
+
+
+def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None:
+    """A warning when ``VAULT_ADDR`` moved a store away from the file's ``addr``.
+
+    P3 puts ``VAULT_ADDR`` above the file (#865). A shell often keeps the
+    variable from other work, and the run then sends its auth material to that
+    address and writes there, so every command that loads the file warns. The
+    variable this tool owns, ``SOPULI_VAULT_ADDR``, and ``--vault-addr`` do not
+    warn: whoever set them meant this tool.
+
+    Nothing to say when the file declares no ``addr`` for the store, or the
+    two name the same server: see :func:`_same_address`.
+
+    **Userinfo is masked** in the message by :func:`_shown`. The warning reaches
+    every run's output, and an address such as ``https://user:token@proxy``
+    carries a credential.
+    """
+    if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
+        return None
+    declared = next((one for one in answer.contributions if one.layer in FILE_LAYERS), None)
+    if declared is None or _same_address(declared.value, answer.value):
+        return None
+    return ConfigWarning(
+        message=(
+            f"{answer.detail} sets the address of vault {name!r} to {_shown(answer.value)}, "
+            f"not {_shown(declared.value)}, which {declared.detail} declares"
+        ),
+        # No `at`: the message names both locations already.
+        at="",
+        hint=(
+            f"unset {answer.detail} if it is left over from other work; to choose the "
+            f"address for this tool on purpose, use SOPULI_VAULT_ADDR or --vault-addr"
+        ),
+        code=THIRD_PARTY_ADDR_OVERRIDES,
+    )
+
+
+#: The layers that are the config file, for :func:`_addr_overridden`.
+FILE_LAYERS = frozenset({Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS})
+
+#: The port a scheme implies, so ``https://v`` and ``https://v:443`` are one server.
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _same_address(first: str, second: str) -> bool:
+    """Whether two addresses name the same server and path.
+
+    Scheme and host are compared without case (``urlsplit`` lowers both), a
+    missing port is the scheme's default, and a trailing ``/`` is ignored. An
+    address that does not parse is compared as written.
+    """
+    try:
+        one, two = urlsplit(first), urlsplit(second)
+        ports = [
+            url.port if url.port is not None else DEFAULT_PORTS.get(url.scheme)
+            for url in (one, two)
+        ]
+    except ValueError:
+        return first == second
+    return (
+        one.scheme == two.scheme
+        and (one.hostname or "") == (two.hostname or "")
+        and ports[0] == ports[1]
+        and one.path.rstrip("/") == two.path.rstrip("/")
+    )
+
+
+def _shown(address: str) -> str:
+    """``address`` with everything before its last ``@`` shown as ``***``.
+
+    **Not parsed, so it fails closed.** ``urlsplit`` ends the authority at the
+    first ``/``, ``?`` or ``#``, so a password holding one would leave the
+    ``@`` outside the part it masks, and an address it cannot parse would be
+    returned whole. Cutting at the last ``@`` after the scheme masks the
+    credential in every spelling. An ``@`` in the path masks the host too,
+    which hides more than it needs to and never less.
+    """
+    scheme, separator, rest = address.partition("://")
+    if not separator:
+        scheme, rest = "", address
+    if "@" not in rest:
+        return address
+    return f"{scheme}{separator}***@{rest.rpartition('@')[2]}"
 
 
 def _merge_tls(

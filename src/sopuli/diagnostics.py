@@ -37,6 +37,7 @@ from sopuli.config.codes import (
     NOTIFY_UNSERVICEABLE,
     PROFILE_NAMED_AFTER_ENVIRONMENT,
     RELAXATION_DEFEATED,
+    THIRD_PARTY_ADDR_OVERRIDES,
     THIRD_PARTY_VARIABLE_UNAPPLIED,
     UNREAD_POLICY_KEYS,
     UNVERIFIED_TRANSPORT,
@@ -804,6 +805,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A layer asked to relax a safety setting, and the ratchet held (invariant 10). "
             "The message names both ends: the layer that asked, and where the value that "
             "held is set. Nothing failed, and the run uses the safer value."
+        ),
+        THIRD_PARTY_ADDR_OVERRIDES: (
+            "`VAULT_ADDR` gives a store a different address from the `addr` the file "
+            "declares for it, so this run authenticates to and writes to the variable's "
+            "address. P3 puts the variable above the file, and the warning does not change "
+            "that. The message names both addresses. A shell often keeps `VAULT_ADDR` from "
+            "other work. `SOPULI_VAULT_ADDR` and `--vault-addr` are not warned about, because "
+            "they were set for this tool."
         ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "

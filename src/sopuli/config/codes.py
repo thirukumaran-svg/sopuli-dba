@@ -45,3 +45,9 @@ THIRD_PARTY_VARIABLE_UNAPPLIED = "SOPULI-W038"
 #: because :func:`sopuli.settings.ratchet_note` writes each message and names
 #: the setting.
 RELAXATION_DEFEATED = "SOPULI-W039"
+
+#: ``VAULT_ADDR`` gives a store a different address from the one the file
+#: declares for it (#865). P3 lets the variable win, so the run goes to that
+#: address. Only the third-party variable warns: ``SOPULI_VAULT_ADDR`` and
+#: ``--vault-addr`` were set for this tool.
+THIRD_PARTY_ADDR_OVERRIDES = "SOPULI-W051"

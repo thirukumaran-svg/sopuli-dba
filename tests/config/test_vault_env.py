@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from sopuli.config.codes import THIRD_PARTY_VARIABLE_UNAPPLIED
+from sopuli.config.codes import THIRD_PARTY_ADDR_OVERRIDES, THIRD_PARTY_VARIABLE_UNAPPLIED
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, Vault
@@ -380,3 +380,130 @@ def test_no_environment_variable_addresses_the_ratcheted_key() -> None:
     assert "tls.verify" not in supplied
     assert Layer.ENV not in setting("vaults.*.tls.verify").layers
     assert Layer.ENV_THIRDPARTY not in setting("vaults.*.tls.verify").layers
+
+
+# ------------------------------------------------ VAULT_ADDR over the file ---
+
+
+def overrides(config: Config) -> list[Any]:
+    return [one for one in config.warnings if one.code == THIRD_PARTY_ADDR_OVERRIDES]
+
+
+def test_vault_addr_over_a_different_declared_addr_warns_naming_both() -> None:
+    """P3's order stands, so the variable wins, and the run says so (#865). A
+    shell keeps `VAULT_ADDR` from other work, and the run would otherwise send
+    its auth material there with nothing said."""
+    config = loaded({"VAULT_ADDR": THIRDPARTY_ADDR}, {"addr": DECLARED})
+
+    assert config.vaults[0].addr == THIRDPARTY_ADDR
+    [warning] = overrides(config)
+    assert THIRDPARTY_ADDR in warning.message
+    assert DECLARED in warning.message
+    assert "VAULT_ADDR" in warning.message
+    assert f"vaults.{STORE}.addr" in warning.message, "it names where the file declares it"
+
+
+def test_vault_addr_over_a_profile_addr_names_the_profile() -> None:
+    """The file's answer is its highest layer, so a profile's `addr` is the one
+    the variable overrode."""
+    config = build_config(
+        document({"addr": DECLARED}, profiles={"ci": {"vaults": {STORE: {"addr": NAMED_ADDR}}}}),
+        env={"VAULT_ADDR": THIRDPARTY_ADDR},
+        profile="ci",
+    )
+
+    [warning] = overrides(config)
+    assert NAMED_ADDR in warning.message
+    assert "profiles.ci" in warning.message
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        THIRDPARTY_ADDR,
+        f"{THIRDPARTY_ADDR}/",
+        "https://third-party.example.com:443",
+        "HTTPS://Third-Party.example.com",
+    ],
+    ids=["equal", "trailing-slash", "default-port", "case"],
+)
+def test_vault_addr_that_names_the_same_server_says_nothing(declared: str) -> None:
+    """A warning on every run for an address that is not different would teach
+    operators to ignore it."""
+    assert overrides(loaded({"VAULT_ADDR": THIRDPARTY_ADDR}, {"addr": declared})) == []
+
+
+def test_another_port_is_another_address() -> None:
+    config = loaded(
+        {"VAULT_ADDR": "https://third-party.example.com:8200"}, {"addr": THIRDPARTY_ADDR}
+    )
+
+    assert len(overrides(config)) == 1
+
+
+@pytest.mark.parametrize(
+    ("address", "shown"),
+    [
+        ("https://ops:s3cret@proxy.example.com:8200", "https://***@proxy.example.com:8200"),
+        ("https://ops:s3/cret@proxy.example.com", "https://***@proxy.example.com"),
+        ("https://ops:s3?cret@proxy.example.com", "https://***@proxy.example.com"),
+        ("https://ops:s3#cret@proxy.example.com", "https://***@proxy.example.com"),
+        ("https://ops:s3cret@[proxy", "https://***@[proxy"),
+        ("ops:s3cret@proxy.example.com", "***@proxy.example.com"),
+    ],
+    ids=["plain", "slash", "query", "hash", "unparseable", "no-scheme"],
+)
+def test_credentials_in_an_address_are_not_repeated_in_the_warning(
+    address: str, shown: str
+) -> None:
+    """The warning reaches every run's output, so userinfo is masked. A `/`, `?`
+    or `#` in the password, or an address `urlsplit` cannot parse, still masks."""
+    [warning] = overrides(loaded({"VAULT_ADDR": address}, {"addr": DECLARED}))
+
+    assert "s3" not in warning.message
+    assert "ops" not in warning.message
+    assert shown in warning.message
+
+
+def test_vault_addr_over_a_defaults_addr_names_the_defaults_key() -> None:
+    """`defaults.vaults` is the file too, so overriding it warns."""
+    config = loaded(
+        {"VAULT_ADDR": THIRDPARTY_ADDR}, defaults={"vaults": {STORE: {"addr": DECLARED}}}
+    )
+
+    [warning] = overrides(config)
+    assert DECLARED in warning.message
+    assert f"defaults.vaults.{STORE}.addr" in warning.message
+
+
+def test_the_flag_over_the_file_says_nothing() -> None:
+    """`--vault-addr` was typed for this run."""
+    config = build_config(document({"addr": DECLARED}), vault_addr=ACTIVE_ADDR)
+
+    assert config.vaults[0].addr == ACTIVE_ADDR
+    assert overrides(config) == []
+
+
+def test_vault_addr_where_the_file_declares_no_addr_says_nothing() -> None:
+    """Nothing to disagree with: the variable is the only answer."""
+    config = loaded({"VAULT_ADDR": THIRDPARTY_ADDR})
+
+    assert config.vaults[0].addr == THIRDPARTY_ADDR
+    assert overrides(config) == []
+
+
+def test_this_tools_own_variable_over_the_file_says_nothing() -> None:
+    """`SOPULI_VAULT_ADDR` was set for this tool, so overriding the file is meant."""
+    config = loaded({"SOPULI_VAULT_ADDR": ACTIVE_ADDR}, {"addr": DECLARED})
+
+    assert config.vaults[0].addr == ACTIVE_ADDR
+    assert overrides(config) == []
+
+
+def test_vault_addr_that_lost_to_this_tools_own_variable_says_nothing() -> None:
+    """The run does not go to `VAULT_ADDR`'s address, so there is nothing to warn of."""
+    config = loaded(
+        {"VAULT_ADDR": THIRDPARTY_ADDR, "SOPULI_VAULT_ADDR": ACTIVE_ADDR}, {"addr": DECLARED}
+    )
+
+    assert overrides(config) == []

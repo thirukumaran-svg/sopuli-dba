@@ -2015,6 +2015,13 @@ Where nothing names a default store, the two halves answer differently:
   environment the tool does not own. The warning appears in `diagnostics[]`
   as `SOPULI-W038`.
 
+Where `VAULT_ADDR` is applied and the file declares a different `addr` for that
+store, the variable wins, as P3 says, and every command that loads the file warns
+with `SOPULI-W051`. The message names both addresses. A shell often keeps
+`VAULT_ADDR` from other work, and the run would otherwise send its auth material
+to that address with nothing said. `SOPULI_VAULT_ADDR` and `--vault-addr` do not
+warn: they were set for this tool.
+
 ### `--vault-addr` — layer 1, and the only flag of its kind
 
 ```
