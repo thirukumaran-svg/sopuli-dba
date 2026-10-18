@@ -19,6 +19,8 @@
 # than useless: it removes tier0's services, leaves Oracle running, and then cannot
 # remove the network. See README.md.
 #
+# PORTS are published on loopback only, 127.0.0.1 and ::1. README.md says why.
+#
 # Oracle containers are deliberately long-running: tests reset state by dropping and
 # recreating accounts, never by recreating the container. Note that NOTHING HERE
 # ENFORCES THAT — no service but the two 19c ones and 12.2 declares a volume, so
@@ -54,7 +56,9 @@ services:
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: sopuli-test-root
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
-    ports: ["${SOPULI_TEST_VAULT_PORT:-8200}:8200"]
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_VAULT_PORT:-8200}:8200"
+      - "[::1]:${SOPULI_TEST_VAULT_PORT:-8200}:8200"
     healthcheck:
       test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
       interval: 5s
@@ -89,7 +93,9 @@ services:
     environment:
       POSTGRES_PASSWORD: sopuli-test
       POSTGRES_DB: sopuli
-    ports: ["${SOPULI_TEST_POSTGRES_PORT:-5432}:5432"]
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_POSTGRES_PORT:-5432}:5432"
+      - "[::1]:${SOPULI_TEST_POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -107,7 +113,9 @@ services:
       ORACLE_PASSWORD: sopuli-test
       APP_USER: sopuli_probe
       APP_USER_PASSWORD: sopuli-test
-    ports: ["${SOPULI_TEST_ORACLE_PORT:-1521}:1521"]
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_ORACLE_PORT:-1521}:1521"
+      - "[::1]:${SOPULI_TEST_ORACLE_PORT:-1521}:1521"
     volumes:
       - ./oracle-init:/container-entrypoint-initdb.d:ro
     healthcheck:
@@ -123,7 +131,7 @@ services:
     profiles: [tier2]
     environment:
       ORACLE_PASSWORD: sopuli-test
-    ports: ["1522:1521"]
+    ports: ["127.0.0.1:1522:1521", "[::1]:1522:1521"]
     volumes:
       - ./oracle-init:/container-entrypoint-initdb.d:ro
     healthcheck:
@@ -140,7 +148,7 @@ services:
     profiles: [tier2]
     environment:
       ORACLE_PASSWORD: sopuli-test
-    ports: ["1523:1521"]
+    ports: ["127.0.0.1:1523:1521", "[::1]:1523:1521"]
     volumes:
       - ./oracle-init:/container-entrypoint-initdb.d:ro
     healthcheck:
@@ -160,7 +168,7 @@ services:
     profiles: [tier2]
     environment:
       ORACLE_PASSWORD: sopuli-test
-    ports: ["1524:1521"]
+    ports: ["127.0.0.1:1524:1521", "[::1]:1524:1521"]
     volumes:
       - ./oracle-init:/container-entrypoint-initdb.d:ro
     healthcheck:
@@ -203,7 +211,7 @@ services:
       ORACLE_SID: ORCLCDB
       ORACLE_PDB: ORCLPDB1
       ORACLE_PWD: sopuli-test
-    ports: ["1526:1521"]
+    ports: ["127.0.0.1:1526:1521", "[::1]:1526:1521"]
     volumes:
       - oracle19c-data:/opt/oracle/oradata
       - ./oracle-init:/opt/sopuli/oracle-init:ro
@@ -252,7 +260,7 @@ services:
       ORACLE_SID: ORCLCDB
       ORACLE_PDB: ORCLPDB1
       ORACLE_PWD: sopuli-test
-    ports: ["1527:1521"]
+    ports: ["127.0.0.1:1527:1521", "[::1]:1527:1521"]
     volumes:
       - oracle19c-ru-data:/opt/oracle/oradata
       - ./oracle-init:/opt/sopuli/oracle-init:ro
@@ -302,7 +310,7 @@ services:
       # attaches to SID ORCL, which does not exist.
       ORACLE_SID: ORCLCDB
       PATH: /u01/app/oracle/product/12.2.0/dbhome_1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    ports: ["1528:1521"]
+    ports: ["127.0.0.1:1528:1521", "[::1]:1528:1521"]
     volumes:
       - oracle12c-data:/ORCL
       - ./oracle-init:/opt/sopuli/oracle-init:ro
@@ -332,7 +340,7 @@ services:
     profiles: [nne]
     environment:
       ORACLE_PASSWORD: sopuli-test
-    ports: ["1525:1521"]
+    ports: ["127.0.0.1:1525:1521", "[::1]:1525:1521"]
     volumes:
       - ./oracle-init/sqlnet-nne.ora:/opt/oracle/oradata/dbconfig/FREE/sqlnet.ora:ro
     healthcheck:
@@ -349,7 +357,7 @@ services:
   lowkey-vault:
     image: nagyesta/lowkey-vault:latest
     profiles: [emulators]
-    ports: ["8443:8443"]
+    ports: ["127.0.0.1:8443:8443", "[::1]:8443:8443"]
 
 volumes:
   # Only the two 19c services and 12.2 keep their datafiles; see oracle-19c for why.

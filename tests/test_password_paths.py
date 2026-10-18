@@ -338,8 +338,18 @@ OJDBC_SHA256 = "764cc3f88454d1be117e155d01ed617467b984c9c68f13090dd6083799d2bb8c
 
 JDBC_SOURCE = Path(__file__).resolve().parents[1] / "test" / "jdbc" / "JdbcLogin.java"
 
-#: How a container reaches a database that the DSN names on the host's loopback.
-HOST_ALIAS = "host.docker.internal"
+#: The container a loopback DSN names: the stack's `oracle-free` under the
+#: compose project, as `tests/driver/test_oracle_install_script.py` names it.
+#: The JDBC container joins its network, because the stack publishes its ports
+#: on the host's loopback only (#867), and another container cannot reach those
+#: through the host on Linux.
+ORACLE_CONTAINER = os.environ.get(
+    "SOPULI_TEST_ORACLE_CONTAINER",
+    f"{os.environ.get('COMPOSE_PROJECT_NAME', 'sopuli-test')}-oracle-free-1",
+)
+
+#: The listener's port inside :data:`ORACLE_CONTAINER`, whatever the host maps.
+CONTAINER_PORT = 1521
 
 #: The answers that mean the password broke the login: the driver refused the
 #: URL (ORA-17067), read part of the password as the address (ORA-12261), or the
@@ -393,19 +403,30 @@ def ojdbc(pytestconfig: pytest.Config, tmp_path_factory: pytest.TempPathFactory)
     return jar
 
 
-def _jdbc_address(dsn: str) -> str:
-    """The DSN as a JDBC thin address, `//host:port/service`, as a container sees it.
+def _jdbc_target(docker: str, dsn: str) -> tuple[str, list[str]]:
+    """The DSN as a JDBC thin address, `//host:port/service`, and the network to use.
 
-    A loopback host is the machine the container runs on, so it becomes
-    :data:`HOST_ALIAS`.
+    A loopback DSN names the stack's Oracle container. The JDBC container joins
+    that container's network and connects to its listener as `localhost`, so
+    no published port is involved. Any other host is reached directly.
     """
     if "://" in dsn or "/" not in dsn:
         pytest.skip(f"the JDBC check needs an Easy Connect DSN, host:port/service, not {dsn}")
-    remainder = dsn.lstrip("/")
-    host = dsn_host(dsn)
-    if dsn_is_loopback(dsn):
-        remainder = HOST_ALIAS + remainder[len(host) :]
-    return "//" + remainder
+    if not dsn_is_loopback(dsn):
+        return "//" + dsn.lstrip("/"), []
+    present = subprocess.run(
+        [docker, "container", "inspect", ORACLE_CONTAINER],
+        capture_output=True,
+        check=False,
+        timeout=TIMEOUT,
+    )
+    if present.returncode != 0:
+        pytest.skip(
+            f"the DSN is on loopback and no container {ORACLE_CONTAINER} runs it; "
+            f"set SOPULI_TEST_ORACLE_CONTAINER to the container that does"
+        )
+    service = dsn.lstrip("/")[len(dsn_host(dsn)) :].partition("/")[2]
+    return f"//localhost:{CONTAINER_PORT}/{service}", [f"--network=container:{ORACLE_CONTAINER}"]
 
 
 class _Jdbc:
@@ -419,7 +440,7 @@ class _Jdbc:
     stderr goes to a file, so a full pipe cannot stop the JVM.
     """
 
-    def __init__(self, docker: str, jar: Path, address: str) -> None:
+    def __init__(self, docker: str, jar: Path, address: str, network: list[str]) -> None:
         self._docker = docker
         self._name = f"sopuli-jdbc-{secrets.token_hex(4)}"
         # Closed in close(): the file lives as long as the container.
@@ -431,7 +452,7 @@ class _Jdbc:
                 "--rm",
                 "-i",
                 f"--name={self._name}",
-                f"--add-host={HOST_ALIAS}:host-gateway",
+                *network,
                 "--mount",
                 f"type=bind,src={jar.parent},dst=/ojdbc,readonly",
                 "--mount",
@@ -515,7 +536,7 @@ class _Jdbc:
 def jdbc(jdk: str, ojdbc: Path, live_oracle: Environment) -> Iterator[_Jdbc]:
     """The JDBC login. Requested before ``account``, so a machine without Docker
     skips before the fixture touches the database."""
-    login = _Jdbc(jdk, ojdbc, _jdbc_address(live_oracle.dsn))
+    login = _Jdbc(jdk, ojdbc, *_jdbc_target(jdk, live_oracle.dsn))
     try:
         yield login
     finally:
