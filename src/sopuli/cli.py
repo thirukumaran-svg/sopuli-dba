@@ -230,7 +230,7 @@ from sopuli.output.apply_view import (
 from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
-from sopuli.output.color import ColorChoice
+from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -278,6 +278,7 @@ from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.preflight_view import caveat_notes, render_preflight
+from sopuli.output.printable import printable
 from sopuli.output.reset_view import audited_value, render_password
 from sopuli.output.reset_view import build_result as build_reset_result
 from sopuli.output.reset_view import render as render_reset
@@ -2128,7 +2129,7 @@ def account_reset_password(
         # had been about to touch. That is the case the `click.Abort` handling
         # exists for, reached by a different route, and echoing here is the same
         # fix.
-        click.echo(header, err=True)
+        _echo_err(header, run=run)
 
     # UC-2 §3.3's lock, keyed on the record's path -- the one location that
     # exists on the seen path and the unseen one alike, and the unit two
@@ -2244,7 +2245,7 @@ def account_reset_password(
         #
         # Unreachable for `manual`, which is refused with `--output json` before a
         # password is drawn. Only an unseen method reaches this line.
-        click.echo(shown, err=True)
+        _echo_err(shown, run=run)
         shown = ""
     # Printed as well as serialised: a warning nobody can see in the
     # default output is not surfaced, and these say the run kept no record of
@@ -3313,7 +3314,7 @@ def _hand_over(
             if receipt is not None
             else None
         )
-    click.confirm(
+    _confirm(
         f"show the new password for {account} on {target} on this terminal?",
         abort=True,
         err=True,
@@ -3950,8 +3951,8 @@ def _confirm_break(
                 "without touching anything"
             ),
         )
-    click.echo(render_break(paths, outcome, mode=mode, applied=False), err=True)
-    click.confirm(
+    _echo_err(render_break(paths, outcome, mode=mode, applied=False), run=run)
+    _confirm(
         f"take this lock from {describe_holder(outcome.record)}?",
         abort=True,
         err=True,
@@ -4010,8 +4011,8 @@ def _confirm_environments(
     question = f"{action} in `{demand.named}`?"
     # As `rotate`'s gate does: only where somebody is actually asked.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
-    click.echo(render_plan(plan, noun=noun), err=True)
-    click.confirm(question, abort=True, err=True)
+    _echo_err(render_plan(plan, noun=noun), run=run)
+    _confirm(question, abort=True, err=True)
 
 
 def _asks_environments(plan: Any, run: Invocation) -> bool:
@@ -4242,7 +4243,7 @@ def main() -> None:
         # broke". The error already knows its own location, hint and code --
         # printing it is all that is left to do. `ArgumentError` comes through
         # here too, carrying exit 2 (J7).
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(exc.exit_code) from exc
     except LockDeniedError as exc:
         # P5's exit 7, and the message carries the holder -- who is running
@@ -4250,7 +4251,7 @@ def main() -> None:
         # need opposite responses. This arm and `_classify` in
         # `sopuli.invocation` have to agree: the document's `exit_code` is
         # defined as equal to the process's.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(ExitCode.LOCK_HELD) from exc
     except StoreError as exc:
         # A store carries its own exit code and category -- a login failure is
@@ -4258,7 +4259,7 @@ def main() -> None:
         # document already reports it from `_classify`.
         # Without this arm the process would exit 1 while its own document said
         # otherwise, and `exit_code` is defined as equal to the process's.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(exc.exit_code) from exc
     except LockError as exc:
         # Everything else about a lock, which today is `LockStolenError`, and
@@ -4271,7 +4272,7 @@ def main() -> None:
         # A command that knows what it applied reports exit 4 from its own
         # document and never reaches this handler. Reaching it means nobody could
         # say, and generic failure is what that is.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(ExitCode.FAILURE) from exc
     except DriverError as exc:
         # A driver carries its own exit code and category, the way a store does
@@ -4282,15 +4283,46 @@ def main() -> None:
         # would be indistinguishable from one that broke.
         #
         # `__str__` already renders the hint, so there is nothing to add here.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(exc.exit_code) from exc
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the boundary
         # An exception none of the arms above classifies. A driver error inside
         # a per-account finding keeps its category, vendor code and hint through
         # `_as_error`, and one that escapes a command whole is handled above, so
         # what reaches here is unclassified and generic failure is what it is.
-        click.echo(f"sopuli: {type(exc).__name__}: {exc}", err=True)
+        _print_error(f"{type(exc).__name__}: {exc}")
         raise SystemExit(ExitCode.FAILURE) from exc
+
+
+def _print_error(message: str) -> None:
+    """The one line :func:`main` prints for a run that failed as a whole.
+
+    The message is the exception's, and it carries text from outside the tool:
+    an ORA- message, a vault error body, a lock holder. So every control
+    character in it is shown rather than sent (#859).
+    """
+    click.echo(f"sopuli: {printable(message, colour=False)}", err=True)
+
+
+def _echo_err(text: str, *, run: Invocation) -> None:
+    """A line for stderr outside the emitter: a plan before a prompt, a hand-over.
+
+    It carries text from outside the tool, such as a lock holder from the
+    vault, so every control character is shown rather than sent (#859). Colour
+    is decided for stderr by the run's own `--color` choice and `NO_COLOR`, the
+    way the emitter decides it for stdout.
+    """
+    colour = resolve_color(run.emitter().color_choice, stream=sys.stderr, env=os.environ)
+    click.echo(printable(text, colour=colour), err=True, color=colour)
+
+
+def _confirm(question: str, **options: Any) -> bool:
+    """``click.confirm`` with its question made printable (#859).
+
+    A question can name a lock holder from the vault, and a ``\\r`` in one
+    would overwrite the question being answered.
+    """
+    return bool(click.confirm(printable(question, colour=False), **options))
 
 
 @cli.group("creds")
@@ -6509,7 +6541,7 @@ def _confirm_rollback(
                 "without touching anything"
             ),
         )
-    click.confirm(
+    _confirm(
         "put the vault's `previous` password back on every selected target?",
         abort=True,
         err=True,
@@ -10171,8 +10203,8 @@ def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     # from a run that hung. `--confirm` answered in advance, so nothing is waiting
     # and nothing is sent.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
-    click.echo(render_plan(plan, noun="rotation"), err=True)
-    click.confirm(question, abort=True, err=True)
+    _echo_err(render_plan(plan, noun="rotation"), run=run)
+    _confirm(question, abort=True, err=True)
 
 
 def _preview_rotation(

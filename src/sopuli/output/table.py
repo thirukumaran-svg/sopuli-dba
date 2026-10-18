@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sopuli.output.palette import Role, paint
+from sopuli.output.printable import printable_cell
 
 #: What a truncated cell ends with. ASCII by the same convention as the rest of
 #: the tool's prose -- this is decoration the tool adds, not text a user supplied.
@@ -68,26 +69,33 @@ def render_table(columns: Sequence[Column], rows: Sequence[Sequence[Cell | str]]
     if not rows:
         return []
 
-    widths = [_width_of(column, index, rows) for index, column in enumerate(columns)]
     # Rows are squared off before anything is measured against them, so a caller
     # that built a row from optional fields gets a blank cell rather than a
     # traceback -- and every zip below can be strict.
     squared = [[_cell(row, index) for index in range(len(columns))] for row in rows]
+    widths = [_width_of(column, index, squared) for index, column in enumerate(columns)]
 
     headings = [Cell(column.heading, Role.HEADING) for column in columns]
     return [_line(headings, widths), *(_line(row, widths) for row in squared)]
 
 
-def _width_of(column: Column, index: int, rows: Sequence[Sequence[Cell | str]]) -> int:
-    longest = max((len(_cell(row, index).text) for row in rows), default=0)
+def _width_of(column: Column, index: int, rows: Sequence[Sequence[Cell]]) -> int:
+    longest = max((len(row[index].text) for row in rows), default=0)
     if column.width is not None:
         longest = min(longest, column.width)
     return max(longest, len(column.heading))
 
 
 def _cell(row: Sequence[Cell | str], index: int) -> Cell:
+    """One cell, its text made printable before anything measures it (#859).
+
+    Cells carry text from outside the tool -- an ORA- detail, a lock holder --
+    and a control character in one would move the cursor or start a row the
+    table never laid out.
+    """
     value = row[index] if index < len(row) else ""
-    return value if isinstance(value, Cell) else Cell(value)
+    cell = value if isinstance(value, Cell) else Cell(value)
+    return Cell(printable_cell(cell.text), cell.role)
 
 
 def _fit(text: str, width: int) -> str:
