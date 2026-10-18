@@ -58,7 +58,10 @@ from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE
 from sopuli.lock.keys import LockKey, acquisition_order, lock_key, normalise_path
 from sopuli.lock.manager import LOCK_PREFIX, MODE_CAS, MODE_NONE, lock_path
 from sopuli.lock.record import CLOCK_SKEW, LockRecord
+from sopuli.output.debug import logger
 from sopuli.store.protocol import CAS, LIST, SecretStore, Stored
+
+LOG = logger("lock")
 
 #: :attr:`LockState.declared_by` for a path an `applications:` or `accounts:`
 #: binding names.
@@ -298,6 +301,12 @@ def discover(declared: Iterable[LockKey], *, stores: Mapping[str, SecretStore]) 
     ``lock status`` a command that works on some backends and not others, which
     is worse than a partial answer that says so -- and the caller turns
     ``unlistable`` into the warning that says it.
+
+    **A listed path that :func:`normalise_path` refuses is skipped**, with a
+    debug line. Only a hand-made record can have one, since the tool refuses
+    such a path in every ref it reads (#858). The tool could neither read nor
+    break the record, because the path does not survive the trip into a URL,
+    and raising would end ``lock status`` for every other store.
     """
     known = set(declared)
     found: list[LockKey] = []
@@ -307,7 +316,12 @@ def discover(declared: Iterable[LockKey], *, stores: Mapping[str, SecretStore]) 
             unlistable.append(name)
             continue
         for path in store.list(LOCK_PREFIX):
-            key = LockKey(store=name, path=secret_path(path))
+            try:
+                tail = secret_path(path)
+            except ValueError as error:
+                LOG.debug("skipped lock path %r in %s: %s", path, name, error)
+                continue
+            key = LockKey(store=name, path=tail)
             if key not in known:
                 found.append(key)
     return Discovery(keys=acquisition_order(found), unlistable=tuple(unlistable))

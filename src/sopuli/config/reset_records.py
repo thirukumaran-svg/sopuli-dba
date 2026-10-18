@@ -33,7 +33,7 @@ from typing import Any
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import mapping, reject_unknown_keys, required_string, string
 from sopuli.config.model import ResetRecords
-from sopuli.config.secret_refs import TRAVERSAL, normalise_path
+from sopuli.config.secret_refs import normalise_path, reject_unaddressable_path
 
 RESET_RECORDS_KEYS = ("vault", "prefix")
 
@@ -94,18 +94,16 @@ def _build_prefix(block: dict[str, Any], *, at: KeyPath) -> str:
         )
 
     written = string(block["prefix"], at=where)
-    traversal = sorted({segment for segment in written.split("/") if segment in TRAVERSAL})
-    if traversal:
-        raise ConfigError(
-            f"prefix {written!r} contains "
-            f"{', '.join(repr(one) for one in traversal)} as a path segment",
-            at=where,
-            hint=(
-                "write the path records actually live at -- a relative segment resolves "
-                "somewhere else on the way to the store, so records would be written "
-                "outside the prefix this file names"
-            ),
-        )
+    reject_unaddressable_path(
+        written,
+        what=f"prefix {written!r}",
+        at=where,
+        traversal_hint=(
+            "write the path records actually live at -- a relative segment resolves "
+            "somewhere else on the way to the store, so records would be written "
+            "outside the prefix this file names"
+        ),
+    )
 
     prefix = normalise_path(written)
     if not prefix:

@@ -190,3 +190,18 @@ def test_a_ref_carrying_one_is_refused_by_the_config_layer_with_a_location() -> 
     """
     with pytest.raises(ConfigError, match="as a path segment"):
         parse_secret_ref("apps/../acme/db#DB_CREDENTIALS/acme_web_user")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("apps/acme?x/db", id="query"),
+        pytest.param("apps/%2e%2e/secrets", id="percent"),
+        pytest.param("apps\\acme", id="backslash"),
+        pytest.param("apps/acme\n/db", id="control"),
+    ],
+)
+def test_a_character_that_changes_the_url_is_refused_by_the_backstop(path: str) -> None:
+    """`lock break` reaches `normalise_path` from the command line (#858)."""
+    with pytest.raises(ValueError, match="may not hold"):
+        normalise_path(path)

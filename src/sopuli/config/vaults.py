@@ -33,6 +33,7 @@ from sopuli.config.fields import (
 )
 from sopuli.config.locking import build_lock_mode
 from sopuli.config.model import Vault, VaultAuth, VaultPatch, VaultTls
+from sopuli.config.secret_refs import reject_unaddressable_path
 
 VAULT_KEYS = (
     "type",
@@ -252,13 +253,29 @@ def _reach(entry: dict[str, Any], *, at: KeyPath) -> dict[str, Any]:
     """
     return {
         "addr": optional_string(entry, "addr", at=at),
-        "mount": optional_string(entry, "mount", at=at),
+        "mount": _build_mount(entry, at=at),
         "kv_version": _build_kv_version(entry, at=at),
         "namespace": optional_string(entry, "namespace", at=at),
         "timeout_s": _build_timeout(entry, at=at),
         "tls": _build_tls(entry.get("tls"), at=at.key("tls")),
         "auth": _build_auth(entry.get("auth"), at=at.key("auth")),
     }
+
+
+def _build_mount(container: dict[str, Any], *, at: KeyPath) -> str | None:
+    """A KV or auth ``mount:``. It goes into the URL as written, as a path does."""
+    mount = optional_string(container, "mount", at=at)
+    if mount is not None:
+        reject_unaddressable_path(
+            mount,
+            what=f"mount {mount!r}",
+            at=at.key("mount"),
+            traversal_hint=(
+                "write the mount's own path -- httpx resolves a relative segment before "
+                "the request is sent, so `kv/../sys` would reach `sys/`"
+            ),
+        )
+    return mount
 
 
 def _shape(key: str) -> str:
@@ -358,7 +375,7 @@ def _build_auth(raw: Any, *, at: KeyPath) -> VaultAuth | None:
     method, auth = read_method(raw, at=at, methods=AUTH_METHODS, noun="auth method", shape=_shape)
     return VaultAuth(
         method=method,
-        mount=optional_string(auth, "mount", at=at),
+        mount=_build_mount(auth, at=at),
         role=optional_string(auth, "role", at=at),
         username=optional_string(auth, "username", at=at),
         profile=optional_string(auth, "profile", at=at),

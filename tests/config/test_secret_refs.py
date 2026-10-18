@@ -345,3 +345,43 @@ def test_the_pointer_to_a_key_named_nothing_is_refused_rather_than_honoured() ->
     behind."""
     with pytest.raises(ConfigError):
         parse_secret_ref("tenants/beta#DB_CREDENTIALS/")
+
+
+# ------------------------------------------- characters a URL would read ---
+#
+# The HashiCorp backends put the path into the URL as written (#858).
+
+UNSAFE = [
+    pytest.param("apps/acme?x/db", "?", id="query"),
+    pytest.param("apps/%2e%2e/secrets", "%", id="percent-encoded-traversal"),
+    pytest.param("apps/acme%23x/db", "%", id="percent-encoded-hash"),
+    pytest.param("apps\\acme/db", "\\", id="backslash"),
+    pytest.param("apps/acme\x00/db", "\x00", id="nul"),
+    pytest.param("apps/acme\r/db", "\r", id="carriage-return"),
+    pytest.param("apps/acme\x1b]0;x\x07/db", "\x1b", id="escape"),
+    pytest.param("apps/acme\x7f/db", "\x7f", id="delete"),
+    pytest.param("apps/acme\x85/db", "\x85", id="c1"),
+]
+
+
+@pytest.mark.parametrize(("text", "character"), UNSAFE)
+def test_a_character_that_changes_the_url_is_refused_with_its_location(
+    text: str, character: str
+) -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_secret_ref(f"{text}#password", at=ROOT.key("applications").index(0).key("secret"))
+
+    message = str(caught.value)
+    assert "applications[0].secret" in message
+    assert f"contains {character!r}" in message, "the message must name the character"
+
+
+def test_every_unsafe_character_is_named_once() -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_secret_ref("a?b?c%d")
+
+    assert "contains '?', '%'" in str(caught.value)
+
+
+def test_a_template_token_is_not_an_unsafe_character() -> None:
+    assert parse_secret_ref("tenants/{tenant}/db#{account}").path == "tenants/{tenant}/db"

@@ -144,3 +144,12 @@ def test_a_store_that_is_not_declared_is_refused_at_load() -> None:
     message = str(raised.value)
     assert "kv-typo" in message
     assert "reset_records.vault" in message
+
+
+@pytest.mark.parametrize(
+    "prefix", ["sopuli/resets?x", "sopuli/resets#x", "sopuli/%2e%2e", "sopuli\\resets"]
+)
+def test_a_character_that_changes_the_url_is_refused(prefix: str) -> None:
+    with pytest.raises(ConfigError) as raised:
+        build_reset_records(document(vault="kv", prefix=prefix))
+    assert "reset_records.prefix" in str(raised.value)

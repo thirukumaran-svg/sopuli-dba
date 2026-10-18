@@ -337,6 +337,15 @@ def test_a_declared_path_is_not_reported_as_a_leftover() -> None:
     assert discover([DECLARED], stores={"vault-dev": store}).keys == ()
 
 
+def test_a_listed_path_the_tool_cannot_address_is_skipped_rather_than_raising() -> None:
+    """A record written by hand under `locks/apps/acme?x` cannot be read or broken
+    through a URL, and raising would end `lock status` for every store (#858)."""
+    store = stocked(LEFTOVER)
+    store.write(f"{LOCK_PREFIX}/apps/acme?x/db", record(), cas=0)
+
+    assert discover([], stores={"vault-dev": store}).keys == (LEFTOVER,)
+
+
 def test_discovery_looks_in_every_store_and_keys_by_the_one_it_found_it_in() -> None:
     """Two stores can hold a record at the same path and they are two locks: the
     key is (store, path), and reporting one of them would lose the other."""
