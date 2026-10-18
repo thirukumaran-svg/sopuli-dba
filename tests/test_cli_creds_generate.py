@@ -13,6 +13,7 @@ command.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -700,6 +701,35 @@ def test_an_empty_stdin_is_refused(
     result = run(runner, write_config(CONFIG), "--from-stdin", stdin="")
 
     assert result.exception is not None
+    assert store.read(PATH) is None
+
+
+def test_a_terminal_stdin_is_refused_before_anything_is_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#862. At a terminal the read would wait for end of input, and the typed
+    password would show on the screen and in the scrollback. The flag is for a
+    pipe, so a terminal is refused, and nothing is read from it or written.
+
+    Refused before the selection is resolved, too: it is a usage error, so no
+    plan is printed and no confirmation asked for a run that cannot go ahead,
+    and a selection with nothing to stage cannot exit 0 around it."""
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: stream is sys.stdin)
+
+    def must_not_run(*_: object, **__: object) -> None:
+        raise AssertionError("reached past the terminal check")
+
+    monkeypatch.setattr("sopuli.cli._password_from_stdin", must_not_run)
+    monkeypatch.setattr("sopuli.cli.selected", must_not_run)
+
+    result = run(runner, write_config(CONFIG), "--from-stdin", stdin="TypedAtTheScreen2026abcd\n")
+
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    assert result.exception.message == "--from-stdin was given and stdin is a terminal"
     assert store.read(PATH) is None
 
 

@@ -918,7 +918,9 @@ tool safe to run from a scheduler.
 - **One stream, one reader.** stdin carries at most one secret per run. A command
   that would need two refuses at plan time, instead of reading them in an order
   nobody can see. `creds generate --from-stdin` (UC-1 §4) reads a supplied
-  password from stdin, so there is no `--vault-token-stdin`.
+  password from stdin, so there is no `--vault-token-stdin`. It refuses a stdin
+  that is a terminal, because a typed password would show on the screen: the
+  flag is for a pipe or a redirect.
 - Never written to temp files, never logged, never in exception messages.
   Redaction is applied at the output sink, not hopefully at each call site.
 - On Oracle the tool must document that `ALTER USER ... IDENTIFIED BY` text can

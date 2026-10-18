@@ -241,7 +241,7 @@ sopuli creds generate --application acme [--account acme_web_user]
                       [--promote]            # write straight to `current` (no staging)
                       [--overwrite-current]  # authorise replacing an existing `current`
                       [--overwrite-pending]  # authorise discarding a staged `pending`
-                      [--from-stdin]         # take a supplied password instead of generating
+                      [--from-stdin]         # take a piped password instead of generating
                       [--no-policy-check]    # accept a supplied password that violates the policy
                       [--policy NAME]        # override the policy
                       [--offline]            # do not read constraints from any target
@@ -349,7 +349,11 @@ read does not change the argument.
   dictates the password. It checks the password against the policy and refuses
   on a violation, unless `--no-policy-check` is passed. The audit event records
   that flag. It reads `length:` as a minimum, not an exact figure, because a
-  dictated password is not weaker for being longer.
+  dictated password is not weaker for being longer. It reads a pipe or a
+  redirect, and refuses a stdin that is a terminal before anything else, with
+  exit 2: a typed password would show on the screen. On Windows, mintty without
+  `winpty` gives the program a pipe, which cannot be told from any other pipe, so
+  the refusal needs a console there.
 - **A staged `pending` is not discarded unless you ask** (decided in #769).
   Where a selected account already has one, the run refuses on exit 8, naming
   the accounts, and points to `creds apply`, which applies and promotes what is
