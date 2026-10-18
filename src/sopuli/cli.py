@@ -1978,7 +1978,9 @@ def account_reset_password(
     **`--confirm` cannot be used with `{manual}`.** That path asks every time and no
     flag may answer: the prompt exists to establish that somebody is watching, and
     a flag asserting it would be testifying to its own premise. If nobody can
-    answer, nobody can receive the password either.
+    answer, nobody can receive the password either. For the same reason it is
+    refused unless stdout and stdin are both terminals, so a redirect or a pipe
+    cannot stand in for the person.
 
     **Running it twice draws a second password.** There is no convergence to be
     had -- a fresh random draw has nothing to compare against -- so this verb sits
@@ -3279,13 +3281,14 @@ def _hand_over(
 
     **The one call into the seen path's reveal**, and the only place in `cli.py`
     that can reach it. Everything that makes it allowable was established before
-    the run connected: the method is `manual`, the output is text, stdout is a
-    terminal (`reset.refuse_seen_path`), and `force_expire: true` was written in
-    the file (the config layer). What is left is the prompt.
+    the run connected: the method is `manual`, the output is text, stdout and
+    stdin are terminals (`reset.refuse_seen_path`), and `force_expire: true` was
+    written in the file (the config layer). What is left is the prompt.
 
     **The prompt is asked here, after the password is set**, which is 6.4's
     ordering: the value being shown is by then the account's real password. It is
-    asked on stderr and answered from the terminal, and declining raises -- there
+    asked on stderr and answered on stdin, which `reset.refuse_seen_path` has
+    checked is a terminal (#853), and declining raises -- there
     is nothing to undo, and the operator has simply chosen not to look, which
     leaves the account holding a password nobody has seen. That is a lockout the
     next reset fixes, and it is what "aborted" has to mean here.

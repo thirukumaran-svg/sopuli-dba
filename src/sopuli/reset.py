@@ -19,10 +19,11 @@ Four gates, in this order, and the order is what makes the refusals cheap:
 **Pure, and it issues nothing.** It takes the :class:`UserState` the caller read
 and returns a decision, so every refusal is tier 0 (``04-testing.md`` §4). That
 matters more here than it did for `account suspend`: three of decision #439's
-five guards are properties of a *run* -- the output format, whether stdout is a
-terminal, whether ``--confirm`` was typed -- and a guard that could only be
-tested by building a terminal would be a guard tested once, by hand.
-:func:`refuse_seen_path` takes those three as arguments for exactly that reason.
+five guards are properties of a *run* -- the output format, whether stdout and
+stdin are terminals, whether ``--confirm`` was typed -- and a guard that could
+only be tested by building a terminal would be a guard tested once, by hand.
+:func:`refuse_seen_path` takes those properties as arguments for exactly that
+reason.
 
 **One account, and the plan is the whole blast radius**, as UC-2 §2 requires of
 every mutating verb: the account is named on the command line and a predicate
@@ -170,9 +171,14 @@ def refuse_seen_path(
     answered by a refusal about a screen nobody needed.
 
     **Guard 4 needs stdin to be a terminal as well** (#853). The prompt comes
-    after the DDL and reads stdin. A closed stdin would read end of input after
-    the password was set, so nobody would ever see it, and a pipe such as
-    `yes |` would answer the prompt that no flag may answer.
+    after the DDL, and `click.confirm` in ``cli._hand_over`` reads its answer
+    from stdin. A closed stdin would read end of input after the password was
+    set, so nobody would ever see it, and a pipe such as `yes |` would answer
+    the prompt that no flag may answer. The check is about that prompt's input,
+    so it must change if the prompt ever reads from somewhere else. Reading the
+    controlling terminal directly, as `getpass` does, would let a pipe not
+    answer at all, but it needs a different path on Windows (``CONIN$``), and a
+    refusal before anything connects gives the operator a message instead.
 
     **Checked before the password exists.** Every one of these is knowable from
     argv and the environment, so finding out after the draw -- or worse, after
@@ -186,6 +192,10 @@ def refuse_seen_path(
     about: a script passing ``--confirm`` has made a mistake in its *command line*,
     and telling it about a terminal it was never going to have answers a question it
     did not ask.
+
+    **stdout is asked before stdin.** A run with neither, such as a cron job, is
+    told about the screen the password would go to. That is guard 3, the one the
+    argument rests on, and it is the one no other verb shares.
     """
     if delivery.method != MANUAL or preview:
         return

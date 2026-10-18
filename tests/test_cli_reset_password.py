@@ -112,11 +112,12 @@ def test_a_non_terminal_stdout_is_refused_on_the_seen_path(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:
     """Guard 3, which is what `CliRunner` is by default: its stdout is a buffer,
-    exactly like a redirect or a CI log."""
+    exactly like a redirect or a CI log. Its stdin is not a terminal either, so
+    this also pins the order: stdout is the refusal given."""
     result = run(runner, write_config(OFFLINE), "--account", ACCOUNT)
 
     assert result.exception.exit_code == ExitCode.ABORTED
-    assert "not a terminal" in str(result.exception)
+    assert "stdout is not a terminal" in str(result.exception)
 
 
 def test_a_non_terminal_stdin_is_refused_on_the_seen_path(
