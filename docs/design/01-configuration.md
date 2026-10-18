@@ -2022,6 +2022,13 @@ with `SOPULI-W051`. The message names both addresses. A shell often keeps
 to that address with nothing said. `SOPULI_VAULT_ADDR` and `--vault-addr` do not
 warn: they were set for this tool.
 
+`VAULT_NAMESPACE` over a different `namespace` in the file warns in the same way,
+with `SOPULI-W052`, because it sends the login and the writes to another
+namespace. It warns where the file declares no `namespace` too, because that
+means the root namespace. `VAULT_CACERT` over a different `tls.ca_file` does not warn. Another
+CA file can only make TLS fail, or verify against another CA, and it sends
+nothing to another place ([#892](../decisions/log.md#892)).
+
 ### `--vault-addr` — layer 1, and the only flag of its kind
 
 ```

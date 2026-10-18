@@ -23,7 +23,11 @@ from typing import Any
 
 import pytest
 
-from sopuli.config.codes import THIRD_PARTY_ADDR_OVERRIDES, THIRD_PARTY_VARIABLE_UNAPPLIED
+from sopuli.config.codes import (
+    THIRD_PARTY_ADDR_OVERRIDES,
+    THIRD_PARTY_NAMESPACE_OVERRIDES,
+    THIRD_PARTY_VARIABLE_UNAPPLIED,
+)
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, Vault
@@ -507,3 +511,102 @@ def test_vault_addr_that_lost_to_this_tools_own_variable_says_nothing() -> None:
     )
 
     assert overrides(config) == []
+
+
+# ----------------------------------- VAULT_NAMESPACE and VAULT_CACERT over the file ---
+
+
+def namespace_overrides(config: Config) -> list[Any]:
+    return [one for one in config.warnings if one.code == THIRD_PARTY_NAMESPACE_OVERRIDES]
+
+
+def test_vault_namespace_over_a_different_declared_namespace_warns_naming_both() -> None:
+    """The same hazard as `VAULT_ADDR` (#892): a namespace left over from other
+    work sends the login and the writes to another namespace."""
+    config = loaded({"VAULT_NAMESPACE": "acme-prod"}, {"namespace": "acme-dev"})
+
+    assert config.vaults[0].namespace == "acme-prod"
+    [warning] = namespace_overrides(config)
+    assert "'acme-prod'" in warning.message
+    assert "'acme-dev'" in warning.message
+    assert "VAULT_NAMESPACE" in warning.message
+    assert f"vaults.{STORE}.namespace" in warning.message
+    assert overrides(config) == [], "the address warning is not raised for a namespace"
+
+
+def test_vault_namespace_over_a_defaults_namespace_names_the_defaults_key() -> None:
+    config = loaded(
+        {"VAULT_NAMESPACE": "acme-prod"},
+        defaults={"vaults": {STORE: {"namespace": "acme-dev"}}},
+    )
+
+    [warning] = namespace_overrides(config)
+    assert f"defaults.vaults.{STORE}.namespace" in warning.message
+
+
+def profiled(env: dict[str, str], vault: dict[str, Any], profile: dict[str, Any]) -> Config:
+    """A file with `vault` declared and a `ci` profile patching it, run under `ci`."""
+    return build_config(
+        document(vault, profiles={"ci": {"vaults": {STORE: profile}}}), env=env, profile="ci"
+    )
+
+
+def test_vault_namespace_matching_the_active_profile_says_nothing() -> None:
+    """The file's answer is its highest layer. The object's namespace, which the
+    profile overrides, is not what the variable moved the store away from."""
+    config = profiled(
+        {"VAULT_NAMESPACE": "acme-prod"}, {"namespace": "acme-dev"}, {"namespace": "acme-prod"}
+    )
+
+    assert namespace_overrides(config) == []
+
+
+def test_vault_namespace_over_a_profile_namespace_names_the_profile() -> None:
+    config = profiled(
+        {"VAULT_NAMESPACE": "acme-prod"}, {"namespace": "acme-dev"}, {"namespace": "acme-qa"}
+    )
+
+    [warning] = namespace_overrides(config)
+    assert "'acme-qa'" in warning.message
+    assert "profiles.ci" in warning.message
+
+
+def test_vault_addr_and_vault_namespace_both_warn() -> None:
+    config = loaded(
+        {"VAULT_ADDR": THIRDPARTY_ADDR, "VAULT_NAMESPACE": "acme-prod"},
+        {"addr": DECLARED, "namespace": "acme-dev"},
+    )
+
+    assert len(overrides(config)) == 1
+    assert len(namespace_overrides(config)) == 1
+
+
+@pytest.mark.parametrize("declared", ["acme-dev", "acme-dev/", "/acme-dev"])
+def test_vault_namespace_that_names_the_same_namespace_says_nothing(declared: str) -> None:
+    """Vault does not count a `/` at either end of a namespace."""
+    config = loaded({"VAULT_NAMESPACE": "acme-dev"}, {"namespace": declared})
+
+    assert namespace_overrides(config) == []
+
+
+def test_vault_namespace_where_the_file_declares_none_warns() -> None:
+    """Unlike the address, no namespace is a real state: the root namespace. The
+    variable moves the store away from it, which is the same hazard."""
+    config = loaded({"VAULT_NAMESPACE": "acme-dev"})
+
+    assert config.vaults[0].namespace == "acme-dev"
+    [warning] = namespace_overrides(config)
+    assert "root namespace" in warning.message
+    assert "'acme-dev'" in warning.message
+
+
+def test_vault_cacert_over_a_different_declared_ca_file_says_nothing() -> None:
+    """Decided in #892: another CA file can only make TLS fail, or verify
+    against another CA. It sends nothing to another place."""
+    config = loaded(
+        {"VAULT_CACERT": "/etc/ssl/other.pem"}, {"tls": {"ca_file": "/etc/ssl/acme.pem"}}
+    )
+
+    assert config.vaults[0].tls is not None
+    assert config.vaults[0].tls.ca_file == "/etc/ssl/other.pem"
+    assert config.warnings == ()

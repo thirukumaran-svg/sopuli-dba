@@ -2369,3 +2369,26 @@ the register.
   - Re-run gates 2 and 4 on every Oracle release for every release. The cost is
     a day's maintainer time and an OCI bill, for runs that would repeat the
     recorded ones while the probe and the measured code are unchanged.
+
+## #892
+
+- **Decided:** 2026-10-18, #892
+- **Question:** `SOPULI-W051` warns when `VAULT_ADDR` overrides the address the
+  file declares for a store. `VAULT_NAMESPACE` and `VAULT_CACERT` override the
+  file at the same layer. Should they warn, and under which code?
+- **Decision:** `VAULT_NAMESPACE` over a different `namespace` in the file warns,
+  with a code of its own, `SOPULI-W052`. It warns where the file declares no
+  `namespace` too, because that means the root namespace. `VAULT_CACERT` over
+  a different `tls.ca_file` does not warn.
+- **Why:** a namespace left over from other work sends the login and the writes
+  to another Vault Enterprise namespace, which is the hazard `SOPULI-W051` is
+  for. A CA file sends nothing to another place. It can only make TLS fail, or
+  verify against another CA, which still has to have issued the certificate the
+  server presents. A warning on every run for that would teach operators to
+  ignore the others.
+- **Rejected:**
+  - Widen `SOPULI-W051` to name the setting. Its published meaning is the
+    address, and a consumer that filters on it would start to get namespace
+    messages.
+  - Warn about `VAULT_CACERT` too. It is noise for a case that cannot send auth
+    material elsewhere.

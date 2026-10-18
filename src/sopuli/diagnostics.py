@@ -38,6 +38,7 @@ from sopuli.config.codes import (
     PROFILE_NAMED_AFTER_ENVIRONMENT,
     RELAXATION_DEFEATED,
     THIRD_PARTY_ADDR_OVERRIDES,
+    THIRD_PARTY_NAMESPACE_OVERRIDES,
     THIRD_PARTY_VARIABLE_UNAPPLIED,
     UNREAD_POLICY_KEYS,
     UNVERIFIED_TRANSPORT,
@@ -813,6 +814,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "that. The message names both addresses. A shell often keeps `VAULT_ADDR` from "
             "other work. `SOPULI_VAULT_ADDR` and `--vault-addr` are not warned about, because "
             "they were set for this tool."
+        ),
+        THIRD_PARTY_NAMESPACE_OVERRIDES: (
+            "`VAULT_NAMESPACE` gives a store a different namespace from the one the file "
+            "declares for it, or a namespace where the file declares none and so means the "
+            "root namespace. This run logs in and writes in the variable's namespace. P3 puts "
+            "the variable above the file, and the warning does not change that. The message "
+            "names both namespaces. A shell often keeps `VAULT_NAMESPACE` from other work."
         ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "

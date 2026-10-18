@@ -51,3 +51,10 @@ RELAXATION_DEFEATED = "SOPULI-W039"
 #: address. Only the third-party variable warns: ``SOPULI_VAULT_ADDR`` and
 #: ``--vault-addr`` were set for this tool.
 THIRD_PARTY_ADDR_OVERRIDES = "SOPULI-W051"
+
+#: ``VAULT_NAMESPACE`` gives a store a different namespace from the one the file
+#: declares for it (#892). P3 lets the variable win, so the run logs in and
+#: writes in that namespace. A code of its own rather than a widening of
+#: :data:`THIRD_PARTY_ADDR_OVERRIDES`, whose registered description names the
+#: address.
+THIRD_PARTY_NAMESPACE_OVERRIDES = "SOPULI-W052"
