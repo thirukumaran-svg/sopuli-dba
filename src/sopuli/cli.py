@@ -144,6 +144,7 @@ from sopuli.diagnostics import (
     promotion_withheld,
     reset_record_unwritten,
     rollback_reuse,
+    unaddressable_lock_paths,
     unlistable_stores,
     vault_diagnostics,
     wallet_diagnostics,
@@ -3763,7 +3764,11 @@ def lock_status(
     mode = mode_of(stores)
 
     document.diagnostics.extend(config_diagnostics(filter_estate(config, selection)))
-    document.diagnostics.extend(unlistable_stores(leftovers.unlistable))
+    narrowed = [
+        *unlistable_stores(leftovers.unlistable),
+        *unaddressable_lock_paths(leftovers.skipped),
+    ]
+    document.diagnostics.extend(narrowed)
     document.selection = selection.as_json() or None
     document.lock = build_status_section(states, mode=mode)
     document.finish(
@@ -3775,7 +3780,12 @@ def lock_status(
         Summary(total=len(states), ok=len(states), changed=0, failed=0),
     )
     return render_status(
-        paths, states, match=selection.select, mode=mode, region=region is not None
+        paths,
+        states,
+        match=selection.select,
+        mode=mode,
+        region=region is not None,
+        warnings=[diagnostic.message for diagnostic in narrowed],
     )
 
 

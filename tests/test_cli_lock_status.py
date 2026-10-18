@@ -29,7 +29,7 @@ from sopuli.cli import cli
 from sopuli.config.binding_stores import NoStoreError
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
-from sopuli.diagnostics import UNLISTABLE_STORE, WARNINGS
+from sopuli.diagnostics import UNADDRESSABLE_LOCK_PATH, UNLISTABLE_STORE, WARNINGS
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import lock_path
@@ -665,6 +665,42 @@ def test_the_unlistable_warning_is_described_in_the_registry() -> None:
     value is (03-json-output.md §8)."""
     assert UNLISTABLE_STORE in WARNINGS
     assert "list" in WARNINGS[UNLISTABLE_STORE]
+
+
+def test_a_lock_path_the_tool_cannot_address_is_reported_as_a_warning(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    validator: Draft202012Validator,
+) -> None:
+    """A record written by hand at a path the tool refuses is not shown, but an
+    operator looking for a stuck lock has to learn that it is there (#886)."""
+    stores = with_locks((DEV, held()))
+    stores["vault-dev"].write("locks/bad%3Fkey", held(), cas=0)
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    document = json.loads(result.output)
+    validator.validate(document)
+    [warning] = [d for d in document["diagnostics"] if d["code"] == UNADDRESSABLE_LOCK_PATH]
+    assert "'locks/bad%3Fkey'" in warning["message"]
+    assert "'vault-dev'" in warning["message"]
+    assert "own tools" in warning["message"], "it says what to do"
+    assert [entry["path"] for entry in document["lock"]["found"]] == [DEV.path]
+
+
+def test_the_unaddressable_path_warning_reaches_the_text_output(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    stores = with_locks((DEV, held()))
+    stores["vault-dev"].write("locks/bad%3Fkey", held(), cas=0)
+
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "1 warning:" in result.output
+    assert "skipped the lock record at 'locks/bad%3Fkey'" in result.output
 
 
 def test_a_listable_store_produces_no_such_warning(

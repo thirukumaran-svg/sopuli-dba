@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.44.schema.json`](../schemas/sopuli-run-1.44.schema.json),
+Schemas: [`../schemas/sopuli-run-1.45.schema.json`](../schemas/sopuli-run-1.45.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1019,6 +1019,14 @@ others, and would lose the report for every other store too. But it cannot be
 silent: an empty `found[]` tells a consumer there are no leftovers, and that
 conclusion must come from having looked.
 
+**A listed path the tool cannot address is skipped with a warning**
+(`SOPULI-W053`), one for each path. Such a path holds `?`, `%`, a backslash or a
+control character, or a `.` or `..` segment, which the tool refuses in every
+store path (#858). Only a record written by hand can have one, and the tool can
+neither read nor break it, so it is not in `found[]`. The warning names the store
+and the path, so an operator looking for a stuck lock learns that the record is
+there. The text view prints it, and `SOPULI-W005`, under the tables.
+
 `held` is the verdict and `state` is the evidence; they are not one field twice.
 Anything that is not `released` is held, **including a state this build does not
 know**. Treating an unknown state as free is the one guess that ends with two
@@ -1918,6 +1926,7 @@ not contract and may improve.
 | `SOPULI-W050` | A secret document was not promoted, because a guardrail skipped one of its accounts on one target and the account confirmed on another, with a `pending` (or, on a rollback, a `previous`) to promote (#852). The guardrails read each database, so one account can hold `DBA` on one target only. The skipped target still holds the old password, so promoting would break invariant 7. `pending` stays and the run exits 4. Raised only when every other target confirmed: a failure is reported as the reason first. It has its own code for `SOPULI-W011`'s reason: the same run again skips the same pair, so the text output prints no `repair with:` line when this is all that held the run back. The remedy is to clear what the guardrail reported on that target and run the same command again. The message names each skipped pair, and says that `--force` overrides the guardrail and waives the guardrails for every account the run selects. It spells out no command, because the right one depends on the verb, the run's options and which accounts a `--force` should reach |
 | `SOPULI-W051` | `VAULT_ADDR` gives a store a different address from the `addr` the file declares for it, so the run authenticates to and writes to the variable's address (#865). P3 puts the variable above the file, and the warning does not change that (`01-configuration.md` §6). Raised on every command that loads the file. The message names both addresses and where each comes from, with any `user:password@` shown as `***@`. Not raised when the two name the same server (scheme and host compared without case, a missing port taken as the scheme's default, a trailing `/` ignored), or when the file declares no `addr` for the store. `SOPULI_VAULT_ADDR` and `--vault-addr` are not warned about, because they were set for this tool |
 | `SOPULI-W052` | `VAULT_NAMESPACE` gives a store a different namespace from the `namespace` the file declares for it, so the run logs in and writes in the variable's namespace (#892). A file that declares no `namespace` means the root namespace, so a namespace from the variable warns there too. P3 puts the variable above the file, and the warning does not change that (`01-configuration.md` §6). Raised on every command that loads the file. The message names both namespaces and where each comes from. Not raised when the two differ only in `/` at either end. A code of its own rather than `SOPULI-W051`, whose meaning is the address |
+| `SOPULI-W053` | `lock status` listed a lock record at a path the tool refuses in every store path, one holding `?`, `%`, a backslash or a control character, or a `.` or `..` segment, so the record is not in `found[]` (#886). Only a record written by hand can have such a path (#858), and the tool can neither read nor break it. One entry for each path, naming the store and the path. Remove the record with the vault's own tools if nothing uses it. A code of its own rather than `SOPULI-W005`, because the store could list |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.

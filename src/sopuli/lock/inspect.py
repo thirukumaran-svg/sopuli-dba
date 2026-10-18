@@ -58,10 +58,7 @@ from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE
 from sopuli.lock.keys import LockKey, acquisition_order, lock_key, normalise_path
 from sopuli.lock.manager import LOCK_PREFIX, MODE_CAS, MODE_NONE, lock_path
 from sopuli.lock.record import CLOCK_SKEW, LockRecord
-from sopuli.output.debug import logger
 from sopuli.store.protocol import CAS, LIST, SecretStore, Stored
-
-LOG = logger("lock")
 
 #: :attr:`LockState.declared_by` for a path an `applications:` or `accounts:`
 #: binding names.
@@ -273,17 +270,27 @@ def resolvable_locks(config: Config) -> tuple[LockKey, ...]:
 
 
 @dataclass(frozen=True)
+class SkippedPath:
+    """A listed lock path the tool cannot address (#886)."""
+
+    store: str
+    path: str
+
+
+@dataclass(frozen=True)
 class Discovery:
     """What listing the stores turned up, and where it could not look.
 
-    Two fields because a partial answer has to admit to being one. ``keys`` is
-    what was found; ``unlistable`` names the stores that have no ``list``
-    capability, and a report that showed the first without the second would
-    claim a clean estate on the strength of a store it never asked.
+    A partial answer has to admit to being one. ``keys`` is what was found;
+    ``unlistable`` names the stores that have no ``list`` capability, and
+    ``skipped`` the listed paths the tool cannot address. A report that showed
+    the first without the others would claim a clean estate on the strength of
+    records it never read.
     """
 
     keys: tuple[LockKey, ...] = ()
     unlistable: tuple[str, ...] = ()
+    skipped: tuple[SkippedPath, ...] = ()
 
 
 def discover(declared: Iterable[LockKey], *, stores: Mapping[str, SecretStore]) -> Discovery:
@@ -302,29 +309,34 @@ def discover(declared: Iterable[LockKey], *, stores: Mapping[str, SecretStore]) 
     is worse than a partial answer that says so -- and the caller turns
     ``unlistable`` into the warning that says it.
 
-    **A listed path that :func:`normalise_path` refuses is skipped**, with a
-    debug line. Only a hand-made record can have one, since the tool refuses
+    **A listed path that :func:`normalise_path` refuses is skipped** and named
+    in ``skipped``. Only a hand-made record can have one, since the tool refuses
     such a path in every ref it reads (#858). The tool could neither read nor
     break the record, because the path does not survive the trip into a URL,
-    and raising would end ``lock status`` for every other store.
+    and raising would end ``lock status`` for every other store. The caller
+    turns ``skipped`` into a warning, so an operator looking for a stuck lock
+    learns that the record is there (#886).
     """
     known = set(declared)
     found: list[LockKey] = []
     unlistable: list[str] = []
+    skipped: list[SkippedPath] = []
     for name, store in sorted(stores.items()):
         if LIST not in store.supports():
             unlistable.append(name)
             continue
-        for path in store.list(LOCK_PREFIX):
+        for path in sorted(store.list(LOCK_PREFIX)):
             try:
                 tail = secret_path(path)
-            except ValueError as error:
-                LOG.debug("skipped lock path %r in %s: %s", path, name, error)
+            except ValueError:
+                skipped.append(SkippedPath(store=name, path=path))
                 continue
             key = LockKey(store=name, path=tail)
             if key not in known:
                 found.append(key)
-    return Discovery(keys=acquisition_order(found), unlistable=tuple(unlistable))
+    return Discovery(
+        keys=acquisition_order(found), unlistable=tuple(unlistable), skipped=tuple(skipped)
+    )
 
 
 def secret_path(path: str) -> str:

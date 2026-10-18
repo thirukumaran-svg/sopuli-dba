@@ -49,6 +49,7 @@ from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.driver.protocol import ENCRYPTION_NONE, Encryption, UserState
 from sopuli.driver.protocol import UNKNOWN as ENCRYPTION_UNKNOWN_METHOD
 from sopuli.install_shape import INSTALLED, InstallShape
+from sopuli.lock.inspect import SkippedPath
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager, Unguarded
 from sopuli.lock.record import LockRecord
@@ -512,6 +513,11 @@ CHANGED_NOT_PROMOTED = "SOPULI-W049"
 #: the same pair, so the remedy is to clear what the guardrail reported.
 PROMOTION_SKIPPED = "SOPULI-W050"
 
+#: `lock status` listed a lock path the tool cannot address, so the record at it
+#: is not in the report (#886). Its own code rather than :data:`UNLISTABLE_STORE`,
+#: because the store could list, and the remedy is to remove one record by hand.
+UNADDRESSABLE_LOCK_PATH = "SOPULI-W053"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -645,6 +651,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "only the paths this configuration declares. A lock record left at a path the "
             "file no longer names would not appear -- in that store. Everything reported "
             "is accurate; the survey is narrower than it looks."
+        ),
+        UNADDRESSABLE_LOCK_PATH: (
+            "`lock status` listed a lock record at a path the tool refuses in every store "
+            "path: one holding `?`, `%`, a backslash or a control character, or a `.` or "
+            "`..` segment. The record is not in the report. Only a record written by hand "
+            "can have such a path, and the tool can neither read nor break it. The message "
+            "names the store and the path. Remove the record with the vault's own tools if "
+            "nothing uses it."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1281,6 +1295,36 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
                 f"longer names would not appear"
             ),
         )
+    ]
+
+
+def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]:
+    """Say that `lock status` listed a lock record it cannot show (#886).
+
+    Only a record written by hand can have such a path (#858), and the tool can
+    neither read nor break it. An operator looking for a stuck lock still has to
+    learn that it is there, which a debug line did not tell them.
+
+    One entry per path rather than one for all, unlike
+    :func:`unlistable_stores`: each is a record somebody has to find and remove.
+
+    The message does not quote :func:`~sopuli.config.secret_refs.normalise_path`'s
+    refusal. It names the path a second way, without the ``locks/`` prefix, and
+    its hint is for somebody writing a config, not for somebody removing a
+    record.
+    """
+    return [
+        Diagnostic(
+            level="warning",
+            code=UNADDRESSABLE_LOCK_PATH,
+            message=(
+                f"skipped the lock record at {one.path!r} in store {one.store!r}: its path "
+                f"holds a character or a segment this tool refuses in every store path, "
+                f"so it can neither read nor break the record. Remove it with the vault's "
+                f"own tools if nothing uses it"
+            ),
+        )
+        for one in skipped
     ]
 
 

@@ -51,7 +51,7 @@ from sopuli.lock.inspect import BINDING, RESET_RECORDS, LockState
 from sopuli.lock.manager import HeldLock, LockManager, describe_holder
 from sopuli.lock.record import HELD, RELEASED, LockRecord
 from sopuli.lock.takeover import ABSENT, Nothing, Outcome, Take
-from sopuli.output.palette import Role
+from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
 
 
@@ -230,6 +230,7 @@ def render_status(
     match: tuple[tuple[str, str], ...] = (),
     mode: str,
     region: bool = False,
+    warnings: Sequence[str] = (),
 ) -> str:
     """``lock status`` in text -- the survey a person reads.
 
@@ -265,6 +266,12 @@ def render_status(
     is passed in rather than inferred from the rows: with none found, *looked
     and it is quiet* and *did not look* are the same empty table, and they are
     different answers.
+
+    ``warnings`` are the messages of the survey's own warnings, printed last: a
+    store that could not list (``SOPULI-W005``) and a record at a path the tool
+    cannot address (``SOPULI-W053``). Both make the tables narrower than they
+    look, and the text view is the one most operators read. The config's
+    warnings are not passed, as in every verb but the config verbs (#897).
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -296,6 +303,10 @@ def render_status(
             ]
         )
     lines.extend(["", _summary(states, found, region=region)])
+    if warnings:
+        heading = "1 warning" if len(warnings) == 1 else f"{len(warnings)} warnings"
+        lines.extend(["", paint(f"{heading}:", Role.NOTABLE)])
+        lines.extend(f"  {line}" for message in warnings for line in message.splitlines())
     return "\n".join(lines)
 
 
