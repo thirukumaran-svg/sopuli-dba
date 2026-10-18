@@ -452,8 +452,39 @@ class LockManager:
         A key this run does not hold **raises** rather than passing quietly. A
         check that verified nothing is worse than no check at all, because the
         caller believes it ran and mutates on the strength of it.
+
+        **It renews once half the TTL has gone** (#864). :meth:`renew` runs at
+        target boundaries, but one target can outlast the TTL: many accounts, a
+        slow database, or a VM paused part way through. A lock that expires there
+        can be taken over by a run with ``locking.break_expired``. The check runs
+        before every fenced statement, so renewing here covers the run between
+        two statements; one statement that hangs for longer than the TTL is not
+        covered.
+
+        **When any checked lock is due, every held lock that is due is
+        renewed**, not only the checked ones. A document untouched for the rest
+        of a long target is still promoted at the end, and its lock must not
+        lapse in the meantime. That reads and writes other documents' locks,
+        which a narrowed check otherwise never does, but only at a renewal:
+        once per half TTL, never on an ordinary target. Every renewed lock is
+        verified before its write, so a check that renews is still a check.
         """
-        for one in self._checking(keys):
+        checking = self._checking(keys)
+        if any(self._due(one) for one in checking):
+            due = [one for one in self._checking(()) if self._due(one)]
+            renewing = {one.key for one in due}
+            self._verify([one for one in checking if one.key not in renewing])
+            self._renew(due)
+            return
+        self._verify(checking)
+
+    def _due(self, one: HeldLock) -> bool:
+        """Whether this lock expires within half a TTL."""
+        return one.record.expires_at - self.now() <= self.ttl / 2
+
+    def _verify(self, locks: Sequence[HeldLock]) -> None:
+        """The fence itself: :meth:`check` without the renewal."""
+        for one in locks:
             entry = self._store(one.key)
             found = self._found(entry.store, one.key, now=self.now())
             if found is None:
@@ -477,20 +508,27 @@ class LockManager:
                 )
 
     def _checking(self, keys: Sequence[LockKey]) -> list[HeldLock]:
-        """The held locks ``check`` was asked about. See its docstring."""
+        """The held locks ``check`` was asked about. See its docstring.
+
+        A released lock is not held any more, so it is not checked, and naming
+        one raises like naming a lock the run never took.
+        """
+        live = [one for one in self.held if not one.released]
         if not keys:
-            return list(self.held)
-        held = {one.key: one for one in self.held}
+            return live
+        held = {one.key: one for one in live}
         missing = [key for key in keys if key not in held]
         if missing:
             raise KeyError(
                 f"this run does not hold {', '.join(str(key) for key in missing)}; "
-                f"held: {', '.join(str(one.key) for one in self.held) or 'nothing'}"
+                f"held: {', '.join(str(one.key) for one in live) or 'nothing'}"
             )
-        return [held[key] for key in keys]
+        # Each key once: a lock renewed twice in one pass would send its second
+        # write with the fence the first one replaced.
+        return [held[key] for key in dict.fromkeys(keys)]
 
     def renew(self) -> None:
-        """Extend every held lock, at a target boundary.
+        """Extend every held lock: at a target boundary, or from :meth:`check` when due.
 
         Checks the fence on the way through, because a renewal is a write and
         every write goes behind the same guard. The version the renewal returns
@@ -500,13 +538,22 @@ class LockManager:
         ``acquiring=False``. A takeover can land between the check and the
         write, or on lock *n* after lock *1* has already been rewritten, and what
         that is is a takeover -- not the lost race the acquisition path reports.
+
+        A released lock is left alone: rewriting it would hold it again.
         """
-        self.check()
+        self._renew(self._checking(()))
+
+    def _renew(self, locks: Sequence[HeldLock]) -> None:
+        """Verify these held locks, then extend each. See :meth:`renew`."""
+        if not locks:
+            return
+        self._verify(locks)
         moment = self.now()
-        for position, one in enumerate(self.held):
+        positions = {one.key: position for position, one in enumerate(self.held)}
+        for one in locks:
             entry = self._store(one.key)
             renewed = one.record.renewed(now=moment, ttl=self.ttl)
-            self.held[position] = replace(
+            self.held[positions[one.key]] = replace(
                 one,
                 record=renewed,
                 fence=self._write(entry, one.key, renewed, cas=one.fence or 0, acquiring=False),

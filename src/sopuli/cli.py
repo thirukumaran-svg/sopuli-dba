@@ -6773,7 +6773,8 @@ def _apply_estate(
     enough to need it. A renewal is a write and goes behind the fence like every
     other, so the boundary is also the check that catches a takeover between one
     target and the next -- before the next target's first `ALTER USER` rather
-    than after it.
+    than after it. Inside a target, the fence check before each statement renews
+    once half the TTL has gone (`LockManager.check`, #864).
 
     **A stolen lock ends the run and is returned, not raised.** §8 is explicit
     that the run aborts and mutates nothing further, and what it had already
