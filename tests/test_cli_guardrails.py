@@ -460,6 +460,89 @@ def test_an_account_skipped_on_every_target_does_not_hold_its_neighbours_back(
     assert result.exit_code == ExitCode.SUCCESS
 
 
+#: `acme_web_user` holds `DBA` on `appdb-beta` only, the #852 estate.
+DBA_ON_BETA = {
+    "appdb-alpha": {
+        "ACME_WEB_USER": ordinary("ACME_WEB_USER"),
+        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+    },
+    "appdb-beta": {
+        "ACME_WEB_USER": account(
+            "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
+        ),
+        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+    },
+}
+
+
+def test_a_skip_that_holds_the_promotion_back_prints_its_remedy_and_no_repair_line(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The run's own `repair with:` line would name a run that skips the same
+    pair again, so W050 carries the remedy. Its `--force` names the document's
+    accounts: a bare `--force` waives the guardrails for the whole estate."""
+    estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS))
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "a guardrail skipped acme_web_user on appdb-beta, and that target still holds" in (
+        result.output
+    )
+    assert "creds apply --force --account acme_batch_user --account acme_web_user" in (
+        result.output
+    )
+    assert "repair with:" not in result.output
+
+
+class FailsWebUser(FakeSession):
+    """A target where `acme_web_user` never confirms: every login is refused."""
+
+    def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        if account.upper() == "ACME_WEB_USER":
+            self.attempts.append(account.upper())
+            return VerifyResult("login", "fail", latency_ms=9)
+        return super().verify_password(account, secret)
+
+
+def test_a_skip_beside_a_failure_leaves_the_failure_as_the_reason(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Where the account confirmed nowhere, the failure already holds the
+    document back. Reporting the skip would recommend `--force` on a run whose
+    real blocker is the target that failed."""
+    harness = estate({}, by_target=DBA_ON_BETA, session=FailsWebUser)
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_rotate_reports_the_skip_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`rotate` promotes through the same gate, so it holds the document back
+    and reports W050 as `apply` does. Whether `--finish-rollover` leaves a
+    held-back document's windows open is `_settled`'s rule for every withheld
+    promotion, tested in `test_cli_creds_rotate.py`."""
+    harness = estate({}, by_target=DBA_ON_BETA, document=NOTHING_STAGED)
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(TWO_TARGETS)), "--confirm"]
+        + ["--output", "json"],
+    )
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED in codes
+
+
 def test_the_reason_names_every_check_that_refused(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

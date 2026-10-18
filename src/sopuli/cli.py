@@ -6334,7 +6334,13 @@ def creds_apply(
     # remedy line says "run this again", which is the one thing not to do while
     # somebody else holds this estate's lock. `stopped` says what happened instead,
     # and `render_apply` refuses to print both.
-    repair = rerun if code == ExitCode.PARTIAL and stolen is None else None
+    repair = (
+        rerun
+        if code == ExitCode.PARTIAL
+        and stolen is None
+        and not _only_skips_held_back(states, promotions)
+        else None
+    )
     table = render_apply(
         rows,
         promoted=promoted,
@@ -6450,6 +6456,8 @@ class _Promotion:
 
     ``skipped`` is the (account, target) pairs a guardrail skipped for an account
     this document would have promoted (#852), which ``SOPULI-W050`` names.
+    ``accounts`` is every account the run read from the document, which its
+    remedy names, so that `--force` reaches no account outside the document.
     """
 
     version: int | None
@@ -6459,6 +6467,7 @@ class _Promotion:
     error: Error | None = None
     conflict: bool = False
     skipped: tuple[tuple[str, str], ...] = ()
+    accounts: tuple[str, ...] = ()
 
 
 def _confirm_rollback(
@@ -8359,6 +8368,10 @@ def _promote_documents(
     :func:`_apply_estate` performs, at the other end of the run.
     """
     promotions: dict[LockKey, _Promotion] = {}
+    in_document: dict[LockKey, set[str]] = {}
+    for record in applied:
+        if record.binding.secret is not None and record.binding.vault is not None:
+            in_document.setdefault(_lock_key(record.binding), set()).add(record.binding.account)
     for key, records in _by_document(applied).items():
         owing = [
             record
@@ -8383,6 +8396,7 @@ def _promote_documents(
                 "so the vault was left as it was",
                 promotable=True,
                 skipped=skipped,
+                accounts=tuple(sorted(in_document[key])),
             )
             continue
         if not apply_states.summarise_document(record.outcome.state for record in records):
@@ -8404,7 +8418,7 @@ def _promote_documents(
 def _skipped_pairs(records: Sequence[_Applied]) -> tuple[tuple[str, str], ...]:
     """The (account, target) pairs a guardrail skipped in one document's group.
 
-    :func:`_by_document` keeps a skipped row only for an account applied on
+    :func:`_by_document` keeps a skipped row only for an account confirmed on
     another target, so any found here hold the document back (#852).
     """
     return tuple(
@@ -8421,10 +8435,26 @@ def _skipped_pairs(records: Sequence[_Applied]) -> tuple[tuple[str, str], ...]:
 def _skipped_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Diagnostic]:
     """``SOPULI-W050`` for each document a guardrail skip held back (#852)."""
     return [
-        promotion_skipped(str(key), promotion.skipped)
+        promotion_skipped(str(key), promotion.skipped, promotion.accounts)
         for key, promotion in promotions.items()
         if promotion.skipped
     ]
+
+
+def _only_skips_held_back(states: Sequence[str], promotions: Mapping[LockKey, _Promotion]) -> bool:
+    """Whether a guardrail skip is the whole of what makes this run partial.
+
+    Then the run's own repair line would name a run that skips the same pairs
+    again, so it is not printed and ``SOPULI-W050`` carries the remedy (#852).
+    """
+    held = [one for one in promotions.values() if one.promotable and one.version is None]
+    return (
+        bool(held)
+        and all(one.skipped and one.error is None for one in held)
+        and all(
+            apply_states.is_confirmed(state) or state == apply_states.SKIPPED for state in states
+        )
+    )
 
 
 def _owing(sources: Sequence[tuple[Binding, Source | None]]) -> list[tuple[Binding, bool]]:
@@ -8657,19 +8687,23 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     for ever. Dropping it does neither: its `pending` stays staged and its
     neighbours promote.
 
-    **An account skipped on some of its targets and applied on others keeps its
+    **An account skipped on some of its targets and confirmed on others keeps its
     skipped rows** (#852). The guardrails read each database, so one account can
     hold `DBA` on one target and not on another. Its promotion is then one
     password for all of its targets, and the skipped one still holds the old
     password, so promoting would advertise a credential that target does not have.
     A skipped row is not confirmed, so it holds the document back.
+
+    *Confirmed*, not merely attempted: where the account failed everywhere else,
+    the failure already holds the document back, and keeping the skip would
+    report it as the reason when the target that is down is.
     """
     applied_somewhere = {
         (_lock_key(record.binding), record.binding.account)
         for record in applied
         if record.binding.secret is not None
         and record.binding.vault is not None
-        and record.outcome.state != apply_states.SKIPPED
+        and apply_states.is_confirmed(record.outcome.state)
     }
     grouped: dict[LockKey, list[_Applied]] = {}
     for record in applied:
@@ -9559,7 +9593,7 @@ def _apply_owed(sequence: _Rotation, states: Sequence[str]) -> bool:
         states,
         promoted=all(one.version is not None for one in promotions if one.promotable),
         promotable=any(one.promotable for one in promotions),
-    ) == int(ExitCode.PARTIAL)
+    ) == int(ExitCode.PARTIAL) and not _only_skips_held_back(states, sequence.promotions)
 
 
 def _refuse_staged_rotation(rotating: Sequence[Binding], documents: Mapping[LockKey, Any]) -> None:

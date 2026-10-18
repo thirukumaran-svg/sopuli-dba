@@ -846,13 +846,20 @@ These rules apply:
   which means "some of it worked, run `apply --repair`". But the repair would
   skip the same account again, every night. A run of nothing but skips exits 0,
   as an empty selection does.
-- **A skipped account is dropped from its document's promotion**, from the gate
-  as well as from the write. Promoting it would move its `pending` to `current`
-  while its database still holds the old password, which invariant 7 forbids.
-  Letting it block the gate would mean one account that is always refused, such
-  as one with a `DBA` grant nobody will remove, blocks promotion for every other
-  account at that secret path. Dropping it avoids both: its `pending` stays
-  staged, and the other accounts are promoted.
+- **An account skipped on every one of its targets is dropped from its
+  document's promotion**, from the gate as well as from the write. Promoting it
+  would move its `pending` to `current` while its database still holds the old
+  password, which invariant 7 forbids. Letting it block the gate would mean one
+  account that is always refused, such as one with a `DBA` grant nobody will
+  remove, blocks promotion for every other account at that secret path. Dropping
+  it avoids both: its `pending` stays staged, and the other accounts are
+  promoted.
+- **An account skipped on some targets and confirmed on others holds its
+  document back** (#852). The checks read each database, so one account can hold
+  `DBA` on one target only. Its promotion is one password for all of its
+  targets, and the skipped target still holds the old one. The document is not
+  promoted, so the run exits 4 with `SOPULI-W050`, which names the skipped pairs
+  and the remedy. UC-1 §5 has the rule.
 - **The override is a structured field.** `--force` fills
   `results[].overridden` with the check and what it observed. A consumer can
   then branch on "this account was forced" instead of searching a sentence. The
