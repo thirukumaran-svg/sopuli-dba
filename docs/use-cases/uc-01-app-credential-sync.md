@@ -571,6 +571,17 @@ pair the narrow run already converged, and reports `changed: false` for each. An
 account that a guardrail skipped is inside the run, not outside it
 (`02-oracle-privileges.md` §4 says what a skip means).
 
+A guardrail skip counts against the promotion only where the promotion would
+move past it: the account has a `pending` to promote, or a `previous` on a
+rollback, and confirmed on another target. The guardrails read each database, so
+one account can hold `DBA` on one target and not on another. The skipped target
+then still holds the old password, so the document is not promoted: `pending`
+stays, the run exits 4, and `SOPULI-W050` names the skipped pairs. A failure on
+another target is reported first, because the same run again may fix it. Every
+other skip is dropped from the gate: an account skipped on every one of its
+targets, or applied from `current`, does not hold back the other accounts in its
+document.
+
 The gate counts configured pairs, not visited pairs, because otherwise
 `apply --target appdb-alpha` would promote an account whose other target still
 holds the old password. That is the state invariant 7 exists to prevent, reached

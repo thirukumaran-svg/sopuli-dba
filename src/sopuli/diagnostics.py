@@ -502,6 +502,13 @@ POLICY_VIOLATION_ACCEPTED = "SOPULI-W048"
 #: document).
 CHANGED_NOT_PROMOTED = "SOPULI-W049"
 
+#: A document was not promoted because a guardrail skipped one of its accounts on
+#: one target and the account confirmed on another (#852). The skipped target
+#: still holds the old password, so promoting would break invariant 7. Its own
+#: code for `SOPULI-W011`'s reason: nothing failed, and the same run again skips
+#: the same pair, so the remedy is to clear what the guardrail reported.
+PROMOTION_SKIPPED = "SOPULI-W050"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -848,6 +855,20 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "changed and did not confirm, and `creds apply` again once the target is well "
             "fixes it, or the promotion write failed, and SOPULI-W033 on the run says what "
             "to do. The message says which."
+        ),
+        PROMOTION_SKIPPED: (
+            "A secret document was not promoted because a guardrail skipped one of its "
+            "accounts on one target, and the account confirmed on another with a `pending` "
+            "(or, on a rollback, a `previous`) to promote. The guardrails read each "
+            "database, so one account can hold `DBA` on one target only. The skipped target "
+            "still holds the old password, so promoting would advertise a password it does "
+            "not have. `pending` stays and the run exits 4. Raised only when every other "
+            "target confirmed; a failure is reported as the reason first. The same run "
+            "again skips the same pair, so the run prints no `repair with:` line when this "
+            "is all that held it back. The remedy is to clear what the guardrail reported "
+            "on that target and run the same command again. `--force` overrides it, and "
+            "waives the guardrails for every account the run selects, so the message "
+            "spells out no `--force` command."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1342,6 +1363,33 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
             "which this run's selection left out -- run `creds apply` without the narrowing "
             "to finish"
+        ),
+    )
+
+
+def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagnostic:
+    """One document a guardrail skip held back (#852), and the pairs it skipped.
+
+    ``pairs`` is (account, target), named for :func:`promotion_withheld`'s reason:
+    the reader goes to each of those targets next.
+
+    **No command is printed.** The one that would finish the job depends on the
+    verb, the run's config, profile, source and strategy, and on which accounts a
+    `--force` should reach: a bare one waives the guardrails for every account the
+    run selects, and naming only some narrows the run past a sibling's `pending`.
+    So the message says to run the same command again once the guardrail is
+    cleared, says what `--force` costs, and leaves the choice to the operator.
+    """
+    named = "; ".join(f"{account} on {target}" for account, target in pairs)
+    targets = "that target still holds" if len(pairs) == 1 else "those targets still hold"
+    return Diagnostic(
+        level="warning",
+        code=PROMOTION_SKIPPED,
+        message=(
+            f"{document} was not promoted: a guardrail skipped {named}, and {targets} the "
+            "old password -- clear what the guardrail reported and run the same command "
+            "again. `--force` overrides it, and waives the guardrails for every account "
+            "the run selects"
         ),
     )
 

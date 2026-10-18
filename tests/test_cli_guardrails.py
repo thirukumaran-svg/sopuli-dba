@@ -28,7 +28,7 @@ from sopuli.apply import SKIPPED
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import GUARDRAIL_UNCHECKED, WARNINGS
+from sopuli.diagnostics import GUARDRAIL_UNCHECKED, PROMOTION_SKIPPED, WARNINGS
 from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
@@ -159,6 +159,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         *,
         document: dict[str, Any] | None = None,
         session: type[FakeSession] = FakeSession,
+        by_target: Mapping[str, Mapping[str, UserState]] | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         store.write(
@@ -182,7 +183,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 pass
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
-                opened = session(users)
+                opened = session(by_target[target.name] if by_target else users)
                 sessions.append(opened)
                 return opened
 
@@ -386,6 +387,265 @@ def test_a_run_where_everything_is_skipped_still_exits_zero(
     result = run(runner, write_config(CONFIG))
 
     assert result.exit_code == ExitCode.SUCCESS
+
+
+#: One document shared by two targets, so one account has two pairs and one
+#: promotion for both.
+TWO_TARGETS = CONFIG.replace(
+    "applications:",
+    """\
+  - name: appdb-beta
+    type: oracle
+    dsn: db-prod.example.com:1521/beta.pdb.example.com
+    environment: prod
+    labels: { env: prod, tenant: beta }
+    vault: vault-prod
+applications:""",
+)
+
+
+def test_an_account_skipped_on_one_of_its_targets_is_not_promoted(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#852 and invariant 7. The guardrails read each database, so one account
+    can hold `DBA` on one target only. Its promotion is one password for both
+    targets, and the skipped one still holds the old password."""
+    harness = estate(
+        {},
+        by_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": ordinary("ACME_WEB_USER"),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+            "appdb-beta": {
+                "ACME_WEB_USER": account(
+                    "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
+                ),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    (skipped,) = [
+        one for one in document(result)["diagnostics"] if one.get("code") == PROMOTION_SKIPPED
+    ]
+    assert "a guardrail skipped acme_web_user on appdb-beta" in skipped["message"]
+
+
+def test_an_account_skipped_on_every_target_does_not_hold_its_neighbours_back(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The other half of `_by_document`'s rule: a permanently guarded account
+    must not block promotion for every account sharing its document."""
+    guarded = account("ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"}))
+    harness = estate(
+        {},
+        by_target={
+            name: {"ACME_WEB_USER": guarded, "ACME_BATCH_USER": ordinary("ACME_BATCH_USER")}
+            for name in ("appdb-alpha", "appdb-beta")
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS))
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] == STAGED
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+#: `acme_web_user` holds `DBA` on `appdb-beta` only, the #852 estate.
+DBA_ON_BETA = {
+    "appdb-alpha": {
+        "ACME_WEB_USER": ordinary("ACME_WEB_USER"),
+        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+    },
+    "appdb-beta": {
+        "ACME_WEB_USER": account(
+            "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
+        ),
+        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+    },
+}
+
+
+def test_a_skip_that_holds_the_promotion_back_prints_its_remedy_and_no_repair_line(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The run's own `repair with:` line would name a run that skips the same
+    pair again, so W050 carries the remedy, and says what `--force` would cost."""
+    estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS))
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "a guardrail skipped acme_web_user on appdb-beta, and that target still holds" in (
+        result.output
+    )
+    assert "waives the guardrails for every account the run selects" in result.output
+    assert "repair with:" not in result.output
+
+
+class FailsBatchUserOnBeta(FakeSession):
+    """`acme_batch_user` never confirms on the session that holds `DBA` for
+    `acme_web_user`, which is `appdb-beta`'s."""
+
+    def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        web = self.users.get("ACME_WEB_USER")
+        on_beta = web is not None and "DBA" in web.roles
+        if on_beta and account.upper() == "ACME_BATCH_USER":
+            self.attempts.append(account.upper())
+            return VerifyResult("login", "fail", latency_ms=9)
+        return super().verify_password(account, secret)
+
+
+def test_a_sibling_failure_is_the_reason_before_a_skip(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The same run again may fix a failure, and `--force` is the wrong remedy
+    for it. So the failure holds the document back and W050 is not raised."""
+    harness = estate({}, by_target=DBA_ON_BETA, session=FailsBatchUserOnBeta)
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_a_skip_on_an_account_applied_from_current_holds_nothing_back(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`acme_web_user` has no `pending`, so its skip on beta moves nothing.
+    Keeping it in the gate would block `acme_batch_user` on every run."""
+    harness = estate(
+        {},
+        by_target=DBA_ON_BETA,
+        document={
+            "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+            "pending": {"acme_batch_user": STAGED},
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS))
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] == STAGED
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+class FailsWebUser(FakeSession):
+    """A target where `acme_web_user` never confirms: every login is refused."""
+
+    def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        if account.upper() == "ACME_WEB_USER":
+            self.attempts.append(account.upper())
+            return VerifyResult("login", "fail", latency_ms=9)
+        return super().verify_password(account, secret)
+
+
+def test_a_skip_beside_a_failure_leaves_the_failure_as_the_reason(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Where the account confirmed nowhere, the failure already holds the
+    document back. Reporting the skip would recommend `--force` on a run whose
+    real blocker is the target that failed."""
+    harness = estate({}, by_target=DBA_ON_BETA, session=FailsWebUser)
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_a_skip_on_one_credential_does_not_hold_back_another_of_the_same_account(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The gate is keyed on the credential, the field and pointer, as `_left_out`
+    is. Here each target has its own field for `acme_web_user`, so the skip on
+    beta's field moves nothing, and alpha's field is promoted."""
+    fields = {
+        f"{account}_{target}": value
+        for account in ("acme_web_user", "acme_batch_user")
+        for target, value in (("appdb-alpha", LIVE), ("appdb-beta", LIVE))
+    }
+    harness = estate(
+        {},
+        by_target=DBA_ON_BETA,
+        document={"DB_CREDENTIALS": fields, "pending": dict.fromkeys(fields, STAGED)},
+    )
+    config = TWO_TARGETS.replace("DB_CREDENTIALS/{account}", "DB_CREDENTIALS/{account}_{target}")
+    result = run(runner, write_config(config), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user_appdb-alpha"] == STAGED
+    assert held.data["DB_CREDENTIALS"]["acme_web_user_appdb-beta"] == LIVE
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_a_rollback_is_held_back_by_a_skip_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A rollback promotes `previous` to `current`, so the same gate stands in
+    front of it: `appdb-beta` still holds the password being rolled back from."""
+    harness = estate(
+        {},
+        by_target=DBA_ON_BETA,
+        document={
+            "DB_CREDENTIALS": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            "previous": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+        },
+    )
+    result = run(
+        runner,
+        write_config(TWO_TARGETS),
+        "--source",
+        "previous",
+        "--confirm",
+        "--output",
+        "json",
+    )
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED in codes
+
+
+def test_rotate_reports_the_skip_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`rotate` promotes through the same gate, so it holds the document back
+    and reports W050 as `apply` does. Whether `--finish-rollover` leaves a
+    held-back document's windows open is `_settled`'s rule for every withheld
+    promotion, tested in `test_cli_creds_rotate.py`."""
+    harness = estate({}, by_target=DBA_ON_BETA, document=NOTHING_STAGED)
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(TWO_TARGETS)), "--confirm"]
+        + ["--output", "json"],
+    )
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED in codes
 
 
 def test_the_reason_names_every_check_that_refused(

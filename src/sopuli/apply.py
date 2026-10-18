@@ -730,6 +730,10 @@ def exit_code_for(states: Sequence[str], *, promoted: bool, promotable: bool) ->
     A run whose accounts were *all* skipped therefore exits 0, which is the same
     answer an empty selection already gives. Nothing was eligible, and the table
     says so per account with the reason.
+
+    A skip still reaches the exit code through the promotion. An account skipped
+    on one target and confirmed on another holds its document back (#852), and
+    that document's ``promoted=False`` is what exits 4 -- not the skipped row.
     """
     counted = [state for state in states if state != SKIPPED]
     if not counted:
