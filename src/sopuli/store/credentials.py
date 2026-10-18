@@ -271,8 +271,8 @@ def apply_patch(
 ) -> Written:
     """Apply ``patch`` to the document at ``path``, and say how it was applied.
 
-    **This is where the plaintext appears**, and it is a permitted reveal under
-    invariant 2. Values travel as :class:`~sopuli.secrets.Secret` from
+    **This is where the plaintext appears**, and it is invariant 2's permitted
+    site for the vault write. Values travel as :class:`~sopuli.secrets.Secret` from
     generation through :func:`staged_patch` to here; :func:`_plaintext` unwraps
     them at the last possible moment, immediately before the call that sends
     them. There is exactly one such unwrapping on this path, and it is the reason
