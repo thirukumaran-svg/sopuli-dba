@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.41.schema.json`](../schemas/sopuli-run-1.41.schema.json),
+Schemas: [`../schemas/sopuli-run-1.42.schema.json`](../schemas/sopuli-run-1.42.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1881,6 +1881,7 @@ not contract and may improve.
 | `SOPULI-W047` | `creds generate --promote --overwrite-current` replaced `current` (decision #257). The vault now advertises a password no database has been given, until `creds apply` converges them. A warning, not an error, because the flag is the operator asking for exactly this. In `results[].warnings[]` |
 | `SOPULI-W048` | `creds generate --no-policy-check` accepted a password that violates the policy. One entry per rule violated, naming the rule and the counts, never the characters. In `results[].warnings[]` |
 | `SOPULI-W049` | On one `creds apply` result: `current` may not hold the password this database has, so an application that fetches it may fail to log in. Either the database changed and did not confirm, and `creds apply` again once the target is well fixes it, or the promotion write failed, and `SOPULI-W033` on the run says what to do. The message says which. In `results[].warnings[]`, so it survives a consumer that filters the results |
+| `SOPULI-W050` | A secret document was not promoted, because a guardrail skipped one of its accounts on one target and the run applied it on another (#852). The guardrails read each database, so one account can hold `DBA` on one target only. The skipped target still holds the old password, so promoting would break invariant 7. `pending` stays and the run exits 4. It has its own code for `SOPULI-W011`'s reason: the same run again skips the same pair. The remedy is to clear what the guardrail reported on that target, or to run `creds apply --force` without narrowing it, because a narrowed run is held back by `SOPULI-W027`. The message names each skipped pair |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.

@@ -140,6 +140,7 @@ from sopuli.diagnostics import (
     no_reset_record,
     notification_unsent,
     promotion_failed,
+    promotion_skipped,
     promotion_withheld,
     reset_record_unwritten,
     rollback_reuse,
@@ -6287,6 +6288,8 @@ def creds_apply(
         applied, promotions, rerun=rerun if stolen is None else None
     )
     document.diagnostics.extend(failed_promotions)
+    skipped_promotions = _skipped_promotions(promotions)
+    document.diagnostics.extend(skipped_promotions)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
     # re-password changed, and a summary counting only the DDL would call a run that
@@ -6347,6 +6350,7 @@ def creds_apply(
     notes = render_notices(
         repair_notes
         + [one.message for one in failed_promotions]
+        + [one.message for one in skipped_promotions]
         + [one.message for one in reuse_notices]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
@@ -6443,6 +6447,9 @@ class _Promotion:
 
     ``error`` is set where the write was made and failed, and ``conflict`` says
     whether the store refused its compare-and-set (UC-1 §8 row 7).
+
+    ``skipped`` is the (account, target) pairs a guardrail skipped for an account
+    this document would have promoted (#852), which ``SOPULI-W050`` names.
     """
 
     version: int | None
@@ -6451,6 +6458,7 @@ class _Promotion:
     mechanism: str | None = None
     error: Error | None = None
     conflict: bool = False
+    skipped: tuple[tuple[str, str], ...] = ()
 
 
 def _confirm_rollback(
@@ -8367,6 +8375,16 @@ def _promote_documents(
                 promotable=True,
             )
             continue
+        skipped = _skipped_pairs(records)
+        if skipped:
+            promotions[key] = _Promotion(
+                None,
+                "a guardrail skipped a target this password is for, "
+                "so the vault was left as it was",
+                promotable=True,
+                skipped=skipped,
+            )
+            continue
         if not apply_states.summarise_document(record.outcome.state for record in records):
             promotions[key] = _Promotion(
                 None,
@@ -8381,6 +8399,32 @@ def _promote_documents(
         promotions[key] = _write_promotion(key, owing, documents[key], stores[key.store])
         _promotion_event(key, promotions[key], run)
     return promotions, None
+
+
+def _skipped_pairs(records: Sequence[_Applied]) -> tuple[tuple[str, str], ...]:
+    """The (account, target) pairs a guardrail skipped in one document's group.
+
+    :func:`_by_document` keeps a skipped row only for an account applied on
+    another target, so any found here hold the document back (#852).
+    """
+    return tuple(
+        sorted(
+            {
+                (record.binding.account, record.binding.target)
+                for record in records
+                if record.outcome.state == apply_states.SKIPPED
+            }
+        )
+    )
+
+
+def _skipped_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Diagnostic]:
+    """``SOPULI-W050`` for each document a guardrail skip held back (#852)."""
+    return [
+        promotion_skipped(str(key), promotion.skipped)
+        for key, promotion in promotions.items()
+        if promotion.skipped
+    ]
 
 
 def _owing(sources: Sequence[tuple[Binding, Source | None]]) -> list[tuple[Binding, bool]]:
@@ -8599,9 +8643,9 @@ def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> No
 def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     """Results grouped by the document their account's credential lives in.
 
-    **A guardrail-skipped account is dropped entirely**, from the gate and from the
-    promotion alike, which is the same principle the exit code applies: it left the
-    run's scope rather than failing inside it.
+    **An account a guardrail skipped on every one of its targets is dropped**,
+    from the gate and from the promotion alike, which is the same principle the
+    exit code applies: it left the run's scope rather than failing inside it.
 
     Both halves matter and they pull in opposite directions, which is why this is
     stated rather than left to fall out. Promoting a skipped account would move
@@ -8612,15 +8656,33 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     -- blocking promotion for every neighbour sharing the path, on every run,
     for ever. Dropping it does neither: its `pending` stays staged and its
     neighbours promote.
+
+    **An account skipped on some of its targets and applied on others keeps its
+    skipped rows** (#852). The guardrails read each database, so one account can
+    hold `DBA` on one target and not on another. Its promotion is then one
+    password for all of its targets, and the skipped one still holds the old
+    password, so promoting would advertise a credential that target does not have.
+    A skipped row is not confirmed, so it holds the document back.
     """
+    applied_somewhere = {
+        (_lock_key(record.binding), record.binding.account)
+        for record in applied
+        if record.binding.secret is not None
+        and record.binding.vault is not None
+        and record.outcome.state != apply_states.SKIPPED
+    }
     grouped: dict[LockKey, list[_Applied]] = {}
     for record in applied:
         binding = record.binding
         if binding.secret is None or binding.vault is None:
             continue
-        if record.outcome.state == apply_states.SKIPPED:
+        key = _lock_key(binding)
+        if (
+            record.outcome.state == apply_states.SKIPPED
+            and (key, binding.account) not in applied_somewhere
+        ):
             continue
-        grouped.setdefault(_lock_key(binding), []).append(record)
+        grouped.setdefault(key, []).append(record)
     return grouped
 
 
@@ -9412,6 +9474,8 @@ def creds_rotate(
         rerun=rerun if sequence.stolen is None else None,
     )
     document.diagnostics.extend(failed_promotions)
+    skipped_promotions = _skipped_promotions(sequence.promotions)
+    document.diagnostics.extend(skipped_promotions)
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
 
@@ -9474,6 +9538,7 @@ def creds_rotate(
     notes = render_notices(
         sequence.caveats
         + [one.message for one in failed_promotions]
+        + [one.message for one in skipped_promotions]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
         + _lock_notices(manager)

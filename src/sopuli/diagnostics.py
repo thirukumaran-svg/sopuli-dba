@@ -502,6 +502,13 @@ POLICY_VIOLATION_ACCEPTED = "SOPULI-W048"
 #: document).
 CHANGED_NOT_PROMOTED = "SOPULI-W049"
 
+#: A document was not promoted because a guardrail skipped one of its accounts on
+#: one target and the run applied it on another (#852). The skipped target still
+#: holds the old password, so promoting would break invariant 7. Its own code for
+#: `SOPULI-W011`'s reason: nothing failed, and the same run again skips the same
+#: pair, so the remedy is to clear what the guardrail reported, or `--force`.
+PROMOTION_SKIPPED = "SOPULI-W050"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -848,6 +855,16 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "changed and did not confirm, and `creds apply` again once the target is well "
             "fixes it, or the promotion write failed, and SOPULI-W033 on the run says what "
             "to do. The message says which."
+        ),
+        PROMOTION_SKIPPED: (
+            "A secret document was not promoted because a guardrail skipped one of its "
+            "accounts on one target, and the run applied it on another. The guardrails "
+            "read each database, so one account can hold `DBA` on one target only. The "
+            "skipped target still holds the old password, so promoting would advertise a "
+            "password it does not have. `pending` stays and the run exits 4. The same run "
+            "again skips the same pair, so the remedy is to clear what the guardrail "
+            "reported on that target, or to run `creds apply --force` without narrowing "
+            "it, because a narrowed run is held back by SOPULI-W027."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1342,6 +1359,24 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
             "which this run's selection left out -- run `creds apply` without the narrowing "
             "to finish"
+        ),
+    )
+
+
+def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagnostic:
+    """One document a guardrail skip held back (#852), and the pairs it skipped.
+
+    ``pairs`` is (account, target), named for :func:`promotion_withheld`'s reason:
+    the reader goes to each of those targets next.
+    """
+    named = ", ".join(f"{account} on {target}" for account, target in pairs)
+    return Diagnostic(
+        level="warning",
+        code=PROMOTION_SKIPPED,
+        message=(
+            f"{document} was not promoted: a guardrail skipped {named}, which still holds "
+            "the old password -- clear what the guardrail reported there and run "
+            "`creds apply` again, or run `creds apply --force` if changing it is intended"
         ),
     )
 

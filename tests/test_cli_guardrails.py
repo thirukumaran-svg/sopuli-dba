@@ -28,7 +28,7 @@ from sopuli.apply import SKIPPED
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import GUARDRAIL_UNCHECKED, WARNINGS
+from sopuli.diagnostics import GUARDRAIL_UNCHECKED, PROMOTION_SKIPPED, WARNINGS
 from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
@@ -159,6 +159,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         *,
         document: dict[str, Any] | None = None,
         session: type[FakeSession] = FakeSession,
+        by_target: Mapping[str, Mapping[str, UserState]] | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         store.write(
@@ -182,7 +183,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 pass
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
-                opened = session(users)
+                opened = session(by_target[target.name] if by_target else users)
                 sessions.append(opened)
                 return opened
 
@@ -385,6 +386,77 @@ def test_a_run_where_everything_is_skipped_still_exits_zero(
     )
     result = run(runner, write_config(CONFIG))
 
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+#: One document shared by two targets, so one account has two pairs and one
+#: promotion for both.
+TWO_TARGETS = CONFIG.replace(
+    "applications:",
+    """\
+  - name: appdb-beta
+    type: oracle
+    dsn: db-prod.example.com:1521/beta.pdb.example.com
+    environment: prod
+    labels: { env: prod, tenant: beta }
+    vault: vault-prod
+applications:""",
+)
+
+
+def test_an_account_skipped_on_one_of_its_targets_is_not_promoted(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#852 and invariant 7. The guardrails read each database, so one account
+    can hold `DBA` on one target only. Its promotion is one password for both
+    targets, and the skipped one still holds the old password."""
+    harness = estate(
+        {},
+        by_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": ordinary("ACME_WEB_USER"),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+            "appdb-beta": {
+                "ACME_WEB_USER": account(
+                    "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
+                ),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    (skipped,) = [
+        one for one in document(result)["diagnostics"] if one.get("code") == PROMOTION_SKIPPED
+    ]
+    assert "a guardrail skipped acme_web_user on appdb-beta" in skipped["message"]
+
+
+def test_an_account_skipped_on_every_target_does_not_hold_its_neighbours_back(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The other half of `_by_document`'s rule: a permanently guarded account
+    must not block promotion for every account sharing its document."""
+    guarded = account("ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"}))
+    harness = estate(
+        {},
+        by_target={
+            name: {"ACME_WEB_USER": guarded, "ACME_BATCH_USER": ordinary("ACME_BATCH_USER")}
+            for name in ("appdb-alpha", "appdb-beta")
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS))
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] == STAGED
+    assert held.data["pending"]["acme_web_user"] == STAGED
     assert result.exit_code == ExitCode.SUCCESS
 
 
