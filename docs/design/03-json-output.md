@@ -2086,7 +2086,8 @@ four guards, plus a fifth with no counterpart there.
 
 Two more limits are not redaction rules, so `CLAUDE.md` invariant 2 and UC-2 §6
 hold them. The run is confirmed every time, and `--confirm` does **not** answer
-the prompt. The method requires `force_expire: true`.
+the prompt. The run is refused unless stdin is a terminal, so a pipe cannot
+answer it either. The method requires `force_expire: true`.
 
 **The release gate treats it like `policy sample --reveal`.** It is excluded by
 name from the search, because its output is supposed to contain a password. In

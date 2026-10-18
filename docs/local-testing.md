@@ -799,7 +799,7 @@ delivery:
 ```
 
 It asks for confirmation every time, and `--confirm` does not answer the prompt.
-It refuses when stdout is not a terminal, or when the output is JSON. UC-2 §6.5
+It refuses when stdout or stdin is not a terminal, or when the output is JSON. UC-2 §6.5
 lists its guards. This run used a config with no `reset_records:` block, and
 the tier-1 container does not encrypt connections, so it ends with two notes:
 

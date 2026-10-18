@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -111,11 +112,25 @@ def test_a_non_terminal_stdout_is_refused_on_the_seen_path(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:
     """Guard 3, which is what `CliRunner` is by default: its stdout is a buffer,
-    exactly like a redirect or a CI log."""
+    exactly like a redirect or a CI log. Its stdin is not a terminal either, so
+    this also pins the order: stdout is the refusal given."""
     result = run(runner, write_config(OFFLINE), "--account", ACCOUNT)
 
     assert result.exception.exit_code == ExitCode.ABORTED
-    assert "not a terminal" in str(result.exception)
+    assert "stdout is not a terminal" in str(result.exception)
+
+
+def test_a_non_terminal_stdin_is_refused_on_the_seen_path(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard 4's other half (#853): the prompt comes after the DDL, so a stdin
+    that cannot answer it is refused before anything connects. The target is
+    unreachable on purpose, so a refusal that came later would be a timeout."""
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: stream is sys.stdout)
+    result = run(runner, write_config(OFFLINE), "--account", ACCOUNT, input="y\n")
+
+    assert result.exception.exit_code == ExitCode.ABORTED
+    assert "stdin is not a terminal" in str(result.exception)
 
 
 def test_an_unimplemented_method_is_refused_before_anything_connects(
