@@ -275,8 +275,7 @@ def apply_patch(
     site for the vault write. Values travel as :class:`~sopuli.secrets.Secret` from
     generation through :func:`staged_patch` to here; :func:`_plaintext` unwraps
     them at the last possible moment, immediately before the call that sends
-    them. There is exactly one such unwrapping on this path, and it is the reason
-    everything above can be logged without care.
+    them. That is the reason everything above can be logged without care.
 
     Mechanism, in order:
 
